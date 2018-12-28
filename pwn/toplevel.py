@@ -54,6 +54,7 @@ from pwnlib.util import proc
 from pwnlib.util import safeeval
 from pwnlib.util.crc import BitPolynom
 from pwnlib.util.cyclic import *
+from pwnlib.util.eatman import change_libc, change_ld
 from pwnlib.util.fiddling import *
 from pwnlib.util.getdents import *
 from pwnlib.util.hashes import *

@@ -13,9 +13,10 @@ from pwnlib.util import proc
 from pwnlib.util import safeeval
 from pwnlib.util import sh_string
 from pwnlib.util import web
+from pwnlib.util import eatman
 
 __all__ = [
     'crc', 'cyclic', 'fiddling', 'hashes', 'iters',
     'lists', 'misc', 'net', 'packing', 'proc', 'safeeval',
-    'web'
+    'web', 'eatman'
 ]

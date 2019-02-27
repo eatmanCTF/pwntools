@@ -4,10 +4,10 @@ import os
 from pwnlib.elf import ELF
 from pwnlib.log import getLogger
 from shutil import copyfile
+import sys
 
 log = getLogger(__name__)
 LD_TMPNAME = "/tmp/lso"
-LIBC_TMPNAME = "/tmp/cso"
 ELF_TMPPATH = "/tmp/pwn"
 
 def create_symlink(src, dst):
@@ -20,10 +20,10 @@ def create_symlink(src, dst):
 	os.chmod(dst, 0b111000000) #rwx------
 	return dst
 
-def save_elf(binary, end="debug"):
+def save_elf(binary):
 	if not os.access(ELF_TMPPATH, os.F_OK):
 		os.mkdir(ELF_TMPPATH)
-	path = '{}/{}_{}'.format(ELF_TMPPATH, os.path.basename(binary.path), end)
+	path = '{}/{}'.format(ELF_TMPPATH, os.path.basename(binary.path))
 	if os.access(path, os.F_OK): 
 		os.remove(path)
 		log.info("Removing exist file {}".format(path))
@@ -60,18 +60,18 @@ def change_ld(binary, ld):
 			if not create_symlink(ld, LD_TMPNAME):
 				return None
 			binary.write(addr, LD_TMPNAME.ljust(size, '\x00'))
-			path = save_elf(binary, 'ld')
+			path = save_elf(binary)
 			if not path:
 				return None
 	log.success("PT_INTERP has changed from {} to {}. Using temp file {}".format(data, ld, path)) 
 	return ELF(path)
 
-def change_libc(binary, libc):
+def change_lib(binary, lib_name, lib_path):
 	"""
-	Force to use assigned new libc.so by changing the binary
+	Force to use assigned new lib by changing the binary
 	"""
-	if not os.access(libc, os.R_OK): 
-		log.failure("Invalid path {} to ld".format(ld))
+	if not os.access(lib_path, os.R_OK): 
+		log.failure("Invalid path {} to {}".format(lib_path, lib_name))
 		return None
   
 	if not isinstance(binary, ELF):
@@ -88,22 +88,81 @@ def change_libc(binary, libc):
 
 	strtab = binary.dynamic_value_by_tag('DT_STRTAB')
 	
-	prev_lib = 0
+	lib_str_offset = None
+	lib_id = 0
+	binary_dynamic = binary.get_section_by_name('.dynamic')
+	if not binary_dynamic:
+		log.failure("binary_dynamic not found")
+		return None
+	dynamic_tags = binary_dynamic.iter_tags()
 	while True:
-		next_lib = binary.dynamic_value_by_tag('DT_NEEDED')
-		if binary.string(next_lib + strtab) == 'libc.so.6':
-			libc_str_offset = next_lib + strtab
+		try:
+			next_lib_offset = next(t for t in dynamic_tags if 'DT_NEEDED' == t.entry.d_tag).entry.d_val
+			lib_tmp_name = '/tmp/l{}'.format(lib_id)
+			lib_id += 1
+			if binary.string(next_lib_offset + strtab) == lib_name:
+				lib_str_offset = next_lib_offset + strtab
+				break
+		except StopIteration:
 			break
-		if next_lib == prev_lib:
-			log.failure("string libc.so.6 not found")
-			return None
-		prev_lib = next_lib
-
-	if not create_symlink(libc, LIBC_TMPNAME):
+	
+	if not lib_str_offset:
+		log.failure("string {} not found".format(lib_name))
 		return None
 
-	binary.write(libc_str_offset, LIBC_TMPNAME.ljust(9, '\x00'))	
-	path = save_elf(binary, 'libc')
+	if not create_symlink(lib_path, lib_tmp_name):
+		log.failure("create symlink from {} to {} failed!".format(lib_path, lib_tmp_name))
+		return None
+
+	binary.write(lib_str_offset, lib_tmp_name.ljust(len(lib_name), '\x00'))	
+	path = save_elf(binary)
 	if not path:
+		log.failure("binary save failed!")
 		return None
 	return ELF(path)
+
+def mod_attack(n, e1, c1, e2, c2):
+    """
+        RSA mod attack
+        known: e1, e2, c1, c2, n
+        unknown: m
+        conditions:
+            m ** e1 % n = c1
+            m ** e2 % n - c2
+    """
+    if isinstance(n, basestring):
+        n = int(n, 16)
+    if isinstance(e1, basestring):
+        e1 = int(e1, 16)
+    if isinstance(c1, basestring):
+        c1 = int(c1, 16)
+    if isinstance(e2, basestring):
+        e2 = int(e2, 16)
+    if isinstance(c2, basestring):
+        c2 = int(c2, 16)
+
+    sys.setrecursionlimit(100000)
+    def egcd(a, b):
+        if a == 0:
+            return (b, 0, 1)
+        else:
+            g, y, x = egcd(b % a, a)
+            return (g, x - (b // a) * y, y)
+
+    def modinv(a, m):
+        g, x, y = egcd(a, m)
+        if g != 1:
+            raise Exception('modular inverse does not exist')
+        else:
+            return x % m
+
+    s = egcd(e1, e2)
+    s1 = s[1]
+    s2 = s[2]
+    if s1 < 0:
+        s1 = -s1
+        c1 = modinv(c1, n)
+    elif s2 < 0:
+        s2 = -s2
+        c2 = modinv(c2, n)
+    return pow(c1, s1, n) * pow(c2, s2, n) % n

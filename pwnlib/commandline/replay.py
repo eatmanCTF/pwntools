@@ -155,7 +155,6 @@ class Address(object):
             {'type': 'digital', 'arch': 'i386', 'endian': 'big', 'parser': Address.parse_digital_i386, 'transformer': Address.trans_digital_i386},
         ]
 
-
     @staticmethod
     def parse_raw_amd64_little(data, i):
         # parse 64-bit little-endian raw address to value. eg. '\x78\x56\x34\x12\xf0\x7f' ==> 0x7ff012345678
@@ -189,7 +188,6 @@ class Address(object):
         except:
             return None
         return res
-
 
     @staticmethod
     def parse_raw_i386_little(data, i):
@@ -225,7 +223,6 @@ class Address(object):
         except:
             return None
         return res
-
 
     @staticmethod
     def parse_hex_amd64_little(data, i):
@@ -382,6 +379,7 @@ class Address(object):
         else:
             raise Exception('unknow arch, endian or type')
 
+
 class PeerBytes(object):
 
     def __init__(self, data, direction, idx):
@@ -470,7 +468,7 @@ class DataFile(object):
                 addr.id = addr_id
                 self.addr_list.append(addr)
                 addr_id += 1
-        self.find_offset()
+        self._look_up_for_offsets()
 
     @property
     def recv_addr_list(self):
@@ -480,11 +478,10 @@ class DataFile(object):
     def send_addr_list(self):
         return self._get_addr_list(DIRECTION_SEND)
 
-
     def _get_addr_list(self, direction):
         return filter(lambda ad: ad.peer.direction == direction, self.addr_list)
     
-    def find_offset(self):
+    def _look_up_for_offsets(self):
         for raddr in self.recv_addr_list:
             for saddr in self.send_addr_list:
                 # if recvived offset is coming before sent offset
@@ -508,6 +505,7 @@ class DataFile(object):
                         of2['weight'] += 1
                         df1.weight += 1
                         df2.weight += 1
+
 
 class ReplayScript(object):
     alternate_colors = [
@@ -547,9 +545,9 @@ class ReplayScript(object):
         self.template = DataFile(args.template) if args.template is not None else None
         self._alternate_color_count = -1
         self.recvuntil = args.recvuntil
-        self.analysis()
+        self._analysis()
 
-    def analysis(self):
+    def _analysis(self):
         for f in self.files:
             if type(f) == str:
                 if self.template and f == self.template.name:
@@ -585,13 +583,16 @@ class ReplayScript(object):
             textcolor = str
         sys.stdout.write(textcolor(string))
 
-    def get_alternate_color(self):
+    def _get_alternate_color(self):
         self._alternate_color_count += 1
         return self.alternate_colors[self._alternate_color_count % len(self.alternate_colors)]
 
     def generate(self):
         df = self.template
         valid_offset_list = []
+        self._output('\n'.join(self.content).format(self.host, self.port, self.elf.file.name) + '\n')
+        self._output_comment('Using template: {}\n'.format(self.template.name))
+        
         for send_addr in df.send_addr_list:
             send_id = send_addr.id
             valid_offset = None
@@ -603,10 +604,6 @@ class ReplayScript(object):
             if valid_offset:
                 valid_offset_list.append(valid_offset)
 
-
-        self._output('\n'.join(self.content).format(self.host, self.port, self.elf.file.name) + '\n')
-        self._output_comment('Using template: {}\n'.format(self.template.name))
-
         for peer in df.peer_list:
             if peer.direction == DIRECTION_RECV:
                 self._output_comment('Received peer{}_{}:\n'.format(peer.direction, peer.idx))
@@ -616,7 +613,7 @@ class ReplayScript(object):
                     if peer is vof['recv'].peer:
                         raddr = vof['recv']
                         if 'color' not in vof:
-                            vof['color'] = self.get_alternate_color() 
+                            vof['color'] = self._get_alternate_color() 
                         self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], raddr.hex, raddr.position, vof['hex']), vof['color'])
                         if not self.no_fix:
                             if not recvived:
@@ -636,7 +633,6 @@ class ReplayScript(object):
                     elif not recvived:
                         self._output('io.recv({}, timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
                             peer.length, self.recv_timeout, peer.inline_content, peer.idx))
-
             elif peer.direction == DIRECTION_SEND:
                 self._output_comment('Sending peer{}_{}:\n'.format(peer.direction, peer.idx))
                 # send peer will not be repeated
@@ -645,7 +641,7 @@ class ReplayScript(object):
                         raddr = vof['recv']
                         saddr = vof['send']
                         if 'color' not in vof:
-                            vof['color'] = self.get_alternate_color() 
+                            vof['color'] = self._get_alternate_color() 
                         self._output_comment('[VOF_S{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], saddr.hex, saddr.position, vof['hex']), vof['color'])
                         if not self.no_fix:
                             self._output('addr_send_{} = addr_recv_{} - {} + {}\n'.format(vof['id'], vof['id'], raddr.hex, saddr.hex))
@@ -663,10 +659,10 @@ class ReplayScript(object):
                     self._output('io.send(payload)\n')
         sys.stdout.write('io.interactive()\n')
 
+
 def main(args):
     rs = ReplayScript(args)
     rs.generate()
-
 
 if __name__ == '__main__':
     pwnlib.commandline.common.main(__file__)

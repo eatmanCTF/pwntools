@@ -15,12 +15,12 @@ parser = common.parser_commands.add_parser(
 )
 
 parser.add_argument('exe', nargs='?', help='Target binary')
-parser.add_argument('--host', help='Remote host / SSH server')
-parser.add_argument('--port', help='Remote port / SSH port', type=int)
+parser.add_argument('--host', help='Remote host / SSH server', default='127.0.0.1')
+parser.add_argument('--port', help='Remote port / SSH port', default=9999, type=int)
 parser.add_argument('--user', help='SSH Username')
 parser.add_argument('--pass', help='SSH Password', dest='password')
 parser.add_argument('--path', help='Remote path of file on SSH server')
-parser.add_argument('--quiet', help='Less verbose template comments', action='store_true')
+parser.add_argument('--quiet', help='Less verbose template comments', action='store_true', default=True)
 
 def main(args):
     cache = None

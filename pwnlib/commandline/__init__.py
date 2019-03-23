@@ -15,6 +15,7 @@ __all__ = [
     'main',
     'phd',
     'pwnstrip',
+    'replay',
     'scramble',
     'shellcraft',
     'unhex',

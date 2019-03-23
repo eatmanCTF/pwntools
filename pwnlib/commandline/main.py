@@ -16,6 +16,7 @@ from pwnlib.commandline import errno
 from pwnlib.commandline import hex
 from pwnlib.commandline import phd
 from pwnlib.commandline import pwnstrip
+from pwnlib.commandline import replay
 from pwnlib.commandline import scramble
 from pwnlib.commandline import shellcraft
 from pwnlib.commandline import template
@@ -38,6 +39,7 @@ commands = {
     'hex': hex.main,
     'phd': phd.main,
     'pwnstrip': pwnstrip.main,
+    'replay': replay.main,
     'scramble': scramble.main,
     'shellcraft': shellcraft.main,
     'template': template.main,

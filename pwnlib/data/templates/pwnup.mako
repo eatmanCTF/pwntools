@@ -1,4 +1,4 @@
-<%page args="binary, host=None, port=None, user=None, password=None, remote_path=None, quiet=False"/>\
+<%page args="binary, host=None, port=None, user=None, password=None, remote_path=None, quiet=True"/>\
 <%
 import os
 import sys
@@ -20,7 +20,7 @@ except ELFError:
 if not binary:
     binary = './path/to/binary'
 
-exe = os.path.basename(binary)
+elf = os.path.basename(binary)
 
 ssh = user or password
 if ssh and not port:
@@ -28,7 +28,7 @@ if ssh and not port:
 elif host and not port:
     port = 4141
 
-remote_path = remote_path or exe
+remote_path = remote_path or elf 
 password = password or 'secret1234'
 binary_repr = repr(binary)
 %>\
@@ -39,17 +39,20 @@ binary_repr = repr(binary)
 # $ ${' '.join(map(sh_string, argv))}
 %endif
 from pwn import *
-
+from roputils import ROP
 %if not quiet:
 # Set up pwntools for the correct architecture
 %endif
+context.update(terminal=['terminator', '--new-tab', '-e'])
 %if ctx.binary:
-exe = context.binary = ELF(${binary_repr})
-<% binary_repr = 'exe.path' %>
+elf = context.binary = ELF(${binary_repr})
+libc = elf.libc
+rop = ROP(elf.path)
+<% binary_repr = 'elf.path' %>
 %else:
 context.update(arch='i386')
-exe = ${binary_repr}
-<% binary_repr = 'exe' %>
+elf = ${binary_repr}
+<% binary_repr = 'elf' %>
 %endif
 
 %if not quiet:
@@ -89,7 +92,10 @@ def local(argv=[], *a, **kw):
     if args.GDB:
         return gdb.debug([${binary_repr}] + argv, gdbscript=gdbscript, *a, **kw)
     else:
-        return process([${binary_repr}] + argv, *a, **kw)
+        io = process([${binary_repr}] + argv, *a, **kw)
+        if args.ATTACH:
+            gdb.attach(io, gdbscript=gdbscript, *a, **kw)
+        return io
 
 def remote(argv=[], *a, **kw):
   %if ssh:
@@ -110,7 +116,7 @@ def remote(argv=[], *a, **kw):
 %if host:
 def start(argv=[], *a, **kw):
     '''Start the exploit against the target.'''
-    if args.LOCAL:
+    if not args.REMOTE:
         return local(argv, *a, **kw)
     else:
         return remote(argv, *a, **kw)
@@ -120,10 +126,13 @@ def start(argv=[], *a, **kw):
     if args.GDB:
         return gdb.debug([${binary_repr}] + argv, gdbscript=gdbscript, *a, **kw)
     else:
-        return process([${binary_repr}] + argv, *a, **kw)
+        io = process([${binary_repr}] + argv, *a, **kw)
+        if args.ATTACH:
+            gdb.attach(io, gdbscript=gdbscript, *a, **kw)
+        return io
+	
 %endif
-
-%if exe or remote_path:
+%if elf or remote_path:
 %if not quiet:
 # Specify your GDB script here for debugging
 # GDB will be launched if the exploit is run via e.g.
@@ -134,7 +143,7 @@ gdbscript = '''
   %if 'main' in ctx.binary.symbols:
 tbreak main
   %elif 'DYN' != ctx.binary.elftype:
-tbreak *0x{exe.entry:x}
+tbreak *0x{elf.entry:x}
   %endif
 %endif
 continue

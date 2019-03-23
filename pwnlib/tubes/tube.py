@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import difflib
 
 from pwnlib import atexit
 from pwnlib import term
@@ -19,7 +20,26 @@ from pwnlib.tubes.buffer import Buffer
 from pwnlib.util import fiddling
 from pwnlib.util import misc
 from pwnlib.util import packing
+from pwnlib.term import text
 
+def strdiff(str1, str2):
+    matches = difflib.SequenceMatcher(None, str1, str2).get_matching_blocks()
+    # matches.sort(key=lambda x:x.size, reverse=True)
+    rendering_bytes_1 = 0
+    rendering_bytes_2 = 0
+    out1 = ""
+    out2 = ""
+    for m in matches:
+        if rendering_bytes_1 <= m.a and rendering_bytes_2 <= m.b:
+            out1 += text.red(str1[rendering_bytes_1:m.a])
+            out2 += text.yellow(str2[rendering_bytes_2:m.b])
+            rendering_bytes_1 = m.a
+            rendering_bytes_2 = m.b
+            out1 += str1[m.a:m.a+m.size]
+            out2 += str2[m.b:m.b+m.size]
+            rendering_bytes_1 += m.size
+            rendering_bytes_2 += m.size
+    return out1, out2
 
 class tube(Timeout, Logger):
     """
@@ -44,7 +64,7 @@ class tube(Timeout, Logger):
         atexit.register(self.close)
 
     # Functions based on functions from subclasses
-    def recv(self, numb = None, timeout = default):
+    def recv(self, numb = None, timeout = default, expect = None, mark=''):
         r"""recv(numb = 4096, timeout = default) -> str
 
         Receives up to `numb` bytes of data from the tube, and returns
@@ -76,7 +96,13 @@ class tube(Timeout, Logger):
                 'Hello, world'
         """
         numb = self.buffer.get_fill_size(numb)
-        return self._recv(numb, timeout) or ''
+        res = self._recv(numb, timeout) or ''
+        if mark:
+            mark = '{} '.format(mark)
+        if expect and res != expect:
+            ores, oexpect = strdiff(res, expect)
+            self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+        return res
 
     def unrecv(self, data):
         """unrecv(data)
@@ -244,7 +270,7 @@ class tube(Timeout, Logger):
 
         return self.buffer.get(numb)
 
-    def recvuntil(self, delims, drop=False, timeout = default):
+    def recvuntil(self, delims, drop=False, timeout = default, expect = None, mark = ''):
         """recvuntil(delims, timeout = default) -> str
 
         Receive data until one of `delims` is encountered.
@@ -325,7 +351,13 @@ class tube(Timeout, Logger):
                         top = top[:start]
                     else:
                         top = top[:end]
-                    return ''.join(data) + top
+                    res = ''.join(data) + top
+                    if mark:
+                        mark = '{} '.format(mark)
+                    if expect and res != expect:
+                        ores, oexpect = strdiff(res, expect)
+                        self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+                    return res
                 if len(top) > longest:
                     i = -longest - 1
                     data.append(top[:i])

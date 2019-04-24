@@ -103,7 +103,7 @@ from pwnlib.util.packing import *
 log = getLogger(__name__)
 
 
-def fmtstr_payload(offset, writes, numbwritten=0, prefix=0, write_size='byte', write_len=0):
+def fmtstr_payload(offset, writes, numbwritten=0, prefix="", write_size='byte', mode='arbitary'):
     r"""fmtstr_payload(offset, writes, numbwritten=0, write_size='byte') -> str
 
     Makes payload with given parameter.
@@ -112,7 +112,9 @@ def fmtstr_payload(offset, writes, numbwritten=0, prefix=0, write_size='byte', w
 
     Arguments:
         offset(int): the first formatter's offset you control
-        writes(dict): dict with addr, value ``{addr: value, addr2: value2}``
+        writes(dict): dict with addr, value ``{addr: value, addr2: value2}`` or 
+                      arbitary mode: ``[[addr1, val1, size1, number1], [addr1, val1, size1, number1]]``
+                      limited mode: ``[[offset1, val1, size1], [offset2, val1, size2]]``
         numbwritten(int): number of byte already written by the printf function
         write_size(str): must be ``byte``, ``short`` or ``int``. Tells if you want to write byte by byte, short by short or int by int (hhn, hn or n)
     Returns:
@@ -149,24 +151,37 @@ def fmtstr_payload(offset, writes, numbwritten=0, prefix=0, write_size='byte', w
         }
     }
 
+    if mode not in ['arbitary', 'limited']:
+        log.error("mode must be 'arbitary' or 'limited'")
+
     if write_size not in ['byte', 'short', 'int']:
         log.error("write_size must be 'byte', 'short' or 'int'")
 
-    number, step, mask, formatz, decalage = config[context.bits][write_size]
-    if write_len:
-        number = write_len
+    ### TODO:
+    # fix interface for x86
     if context.bits == 32:
     # add wheres
-        payload = ""
-        for where, what in writes.items():
-            for i in range(0, number*step, step):
-                payload += pack(where+i)
+        payload = prefix
+        numbwritten += len(prefix)
+        for write in writes:
+            addr = write[0]
+            value = write[1]
+            write_size = 'byte' if len(write) < 3 else write[2]
+            number, step, mask, formatz, decalage = config[context.bits][write_size]
+            count = number if len(write) < 4 else write[3]
+            for i in range(0, count*step, step):
+                payload += pack(addr+i)
 
         numbwritten += len(payload)
         fmtCount = 0
-        for where, what in writes.items():
-            for i in range(0, number):
-                current = what & mask
+        for write in writes:
+            addr = write[0]
+            value = write[1]
+            write_size = 'byte' if len(write) < 3 else write[2]
+            number, step, mask, formatz, decalage = config[context.bits][write_size]
+            count = number if len(write) < 4 else write[3]
+            for i in range(0, count):
+                current = addr & mask
                 if numbwritten & mask <= current:
                     to_add = current - (numbwritten & mask)
                 else:
@@ -177,18 +192,23 @@ def fmtstr_payload(offset, writes, numbwritten=0, prefix=0, write_size='byte', w
                 payload += "%{}${}n".format(offset + fmtCount, formatz)
 
                 numbwritten += to_add
-                what >>= decalage
+                addr >>= decalage
                 fmtCount += 1
+                
     elif context.bits == 64:
         # eatman fix: put address backend
-        payload = ""
-        fmt_payload = ""
-        numbwritten += prefix
+        fmt_payload = prefix
+        numbwritten += len(prefix)
         fmtCountDict = {}
         fmtCount = 0
-        for where, what in writes.items():
-            for i in range(0, number):
-                current = what & mask
+        for write in writes:
+            addr = write[0]
+            value = write[1]
+            write_size = 'byte' if len(write) < 3 else write[2]
+            number, step, mask, formatz, decalage = config[context.bits][write_size]
+            count = number if len(write) < 4 else write[3]
+            for i in range(0, count):
+                current = value & mask
                 if numbwritten & mask <= current:
                     to_add = current - (numbwritten & mask)
                 else:
@@ -196,33 +216,41 @@ def fmtstr_payload(offset, writes, numbwritten=0, prefix=0, write_size='byte', w
 
                 if to_add != 0:
                     fmt_payload += "%{}c".format(to_add)
-                fmt_payload += "%{{{}_{}}}${}n".format(where, i, formatz)
-                fmtCountDict["{}_{}".format(where, i)] = offset + fmtCount
+                fmt_payload += "%{{{}_{}}}${}n".format(addr, i, formatz)
                 numbwritten += to_add
-                what >>= decalage
-                fmtCount += 1
+                if not mode == "arbitary":
+                    fmtCountDict["{}_{}".format(addr, i)] = offset + addr
+                    break
+                else:
+                    fmtCountDict["{}_{}".format(addr, i)] = offset + fmtCount
+                    value >>= decalage
+                    fmtCount += 1
 
-        tmp_payload = ""
-        cur_payload = fmt_payload.format(**fmtCountDict)
-        while len(cur_payload) != len(tmp_payload):
-            to_fill = 8 - (len(cur_payload) + prefix) % 8
-            if to_fill != 0:
-                fmt_payload += to_fill * '\x00'
-                cur_payload += to_fill * '\x00'
-            tmp_count = (len(tmp_payload) + prefix)// 8
-            cur_count = (len(cur_payload) + prefix) // 8
-            for key in fmtCountDict.keys():
-                fmtCountDict[key] -= tmp_count
-                fmtCountDict[key] += cur_count
-            tmp_payload = cur_payload
-            cur_payload = fmt_payload.format(**fmtCountDict)
 
-        payload = cur_payload
-        for where, what in writes.items():
-            for i in range(0, number*step, step):
-                payload += pack(where+i)
-        numbwritten += len(payload)
+        payload = fmt_payload.format(**fmtCountDict)
+        if mode == "arbitary":
+            tmp_payload = ""
+            while len(payload) != len(tmp_payload):
+                to_fill = 8 - len(payload) % 8
+                if to_fill != 0:
+                    fmt_payload += to_fill * '\x00'
+                    payload += to_fill * '\x00'
+                tmp_count = len(tmp_payload)// 8
+                pld_count = len(payload) // 8
+                for key in fmtCountDict.keys():
+                    fmtCountDict[key] -= tmp_count
+                    fmtCountDict[key] += pld_count
+                tmp_payload = payload
+                payload = fmt_payload.format(**fmtCountDict)
 
+            for write in writes:
+                addr = write[0]
+                value = write[1]
+                write_size = 'byte' if len(write) < 3 else write[2]
+                number, step, mask, formatz, decalage = config[context.bits][write_size]
+                count = number if len(write) < 4 else write[3]
+                for i in range(0, count*step, step):
+                    payload += pack(addr+i)
     return payload
 
 class FmtStr(object):

@@ -7,7 +7,7 @@ import string
 import sys
 import pwnlib
 from pwnlib.term import text
-import numpy as np
+from hexdump import hexdump
 pwnlib.args.free_form = False
 
 from pwn import *
@@ -158,7 +158,8 @@ class Address(object):
     @staticmethod
     def parse_raw_amd64_little(data, i):
         # parse 64-bit little-endian raw address to value. eg. '\x78\x56\x34\x12\xf0\x7f' ==> 0x7ff012345678
-        if data[i] in [chr(0x7f)] and i >= 5:
+        # TODO: handle address like "0x7f..55.."
+        if data[i] in [chr(0x55), chr(0x56), chr(0x7f)] and i >= 5:
             return u64(data[i-5:i+1].ljust(8, '\x00'), endian='little'), 6, i-5
         else:
             return None
@@ -167,7 +168,7 @@ class Address(object):
     def trans_raw_amd64_little(value):
         # translate value to 64-bit little-endian raw address. eg. 0x7ff012345678 ==> '\x78\x56\x34\x12\xf0\x7f'
         try:
-            res = p64(value, endian='little')
+            res = p64(value, endian='little')[:6]
         except:
             return None
         return res
@@ -175,7 +176,7 @@ class Address(object):
     @staticmethod
     def parse_raw_amd64_big(data, i):
         # parse 64-bit big-endian raw address to value. eg. 'x7f\xf0\x12\34\x56\x78' ==> 0x7ff012345678
-        if data[i] in [chr(0x7f)] and len(data) - i >= 6:
+        if data[i] in [chr(0x55), chr(0x56), chr(0x7f)] and len(data) - i >= 6:
             return u64(data[i:i+6].rjust(8, '\x00'), endian='big'), 6, i
         else:
             return None
@@ -184,7 +185,7 @@ class Address(object):
     def trans_raw_amd64_big(value):
         # translate value to 64-bit big-endian raw address. eg. 0x7ff012345678 ==> 'x7f\xf0\x12\34\x56\x78'
         try:
-            res = p64(value, endian='big')
+            res = p64(value, endian='big')[-6:]
         except:
             return None
         return res
@@ -374,6 +375,8 @@ class Address(object):
                 except:
                     continue
             else:
+                log.warn('unknown address in peer data: {}'.format(data))
+                print hexdump(data)
                 raise Exception('parse failed!')
             return res[0]
         else:
@@ -415,7 +418,9 @@ class PeerBytes(object):
 
     @staticmethod
     def _inline_content(d):
-        if d >= 32 and d <= 126:
+        if d == 34:
+            inline += '\\"'
+        elif d >= 32 and d <= 126:
             return chr(d)
         elif d == 10 or d == 13:
             return '\\n'
@@ -424,7 +429,9 @@ class PeerBytes(object):
 
     @staticmethod
     def _readable_content(d):
-        if d >= 32 and d <= 126:
+        if d == 34:
+            inline += '\\"'
+        elif d >= 32 and d <= 126:
             return chr(d)
         elif d == 10 or d == 13:
             return '\\n'
@@ -505,6 +512,7 @@ class DataFile(object):
                         of2['weight'] += 1
                         df1.weight += 1
                         df2.weight += 1
+
 
 
 class ReplayScript(object):
@@ -617,10 +625,10 @@ class ReplayScript(object):
                         self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], raddr.hex, raddr.position, vof['hex']), vof['color'])
                         if not self.no_fix:
                             if not recvived:
-                                self._output('io.recv({})\n'.format(raddr.position))
-                                self._output('tmp = Address.parseAs(io.recv({}), "{}", "{}", "{}")\n'.format(raddr.length, context.arch, context.endian, raddr.type))
+                                self._output('io.recvn({})\n'.format(raddr.position))
+                                self._output('tmp = Address.parseAs(io.recvn({}), "{}", "{}", "{}")\n'.format(raddr.length, context.arch, context.endian, raddr.type))
                                 self._output('addr_recv_{} = tmp\n'.format(vof['id']))
-                                self._output('io.recv({}, timeout={})\n'.format(peer.length - int(raddr.position) - raddr.length, self.recv_timeout))
+                                self._output('io.recvn({}, timeout={})\n'.format(peer.length - int(raddr.position) - raddr.length, self.recv_timeout))
                                 recvived = True
                             else:
                                 self._output('addr_recv_{} = tmp\n'.format(vof['id']))
@@ -631,7 +639,7 @@ class ReplayScript(object):
                         self._output('io.recvuntil("{}", timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
                             peer.get_inline_content(-5 if peer.length >= 5 else -1), self.recv_timeout, peer.inline_content, peer.idx))
                     elif not recvived:
-                        self._output('io.recv({}, timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
+                        self._output('io.recvn({}, timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
                             peer.length, self.recv_timeout, peer.inline_content, peer.idx))
             elif peer.direction == DIRECTION_SEND:
                 self._output_comment('Sending peer{}_{}:\n'.format(peer.direction, peer.idx))

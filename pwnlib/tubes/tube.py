@@ -22,6 +22,20 @@ from pwnlib.util import misc
 from pwnlib.util import packing
 from pwnlib.term import text
 
+def inline_string(string):
+    inline = ''
+    for c in string:
+        d = ord(c)
+        if d == 34:
+            inline += '\\"'
+        elif d >= 32 and d <= 126:
+            inline += c
+        elif d == 10 or d == 13:
+            inline += '\\n'
+        else:
+            inline += '\\x' + hex(d)[2:].rjust(2, '0')
+    return inline
+
 def strdiff(str1, str2):
     matches = difflib.SequenceMatcher(None, str1, str2).get_matching_blocks()
     # matches.sort(key=lambda x:x.size, reverse=True)
@@ -31,12 +45,12 @@ def strdiff(str1, str2):
     out2 = ""
     for m in matches:
         if rendering_bytes_1 <= m.a and rendering_bytes_2 <= m.b:
-            out1 += text.red(str1[rendering_bytes_1:m.a])
-            out2 += text.yellow(str2[rendering_bytes_2:m.b])
+            out1 += text.red(inline_string(str1[rendering_bytes_1:m.a]))
+            out2 += text.yellow(inline_string(str2[rendering_bytes_2:m.b]))
             rendering_bytes_1 = m.a
             rendering_bytes_2 = m.b
-            out1 += str1[m.a:m.a+m.size]
-            out2 += str2[m.b:m.b+m.size]
+            out1 += inline_string(str1[m.a:m.a+m.size])
+            out2 += inline_string(str2[m.b:m.b+m.size])
             rendering_bytes_1 += m.size
             rendering_bytes_2 += m.size
     return out1, out2
@@ -224,7 +238,7 @@ class tube(Timeout, Logger):
 
         return data
 
-    def recvn(self, numb, timeout = default):
+    def recvn(self, numb, timeout = default, expect = None, mark='', addr=''):
         """recvn(numb, timeout = default) -> str
 
         Receives exactly `n` bytes.
@@ -265,10 +279,22 @@ class tube(Timeout, Logger):
             while self.countdown_active() and len(self.buffer) < numb and self._fillbuffer(self.timeout):
                 pass
 
+        if mark:
+            mark = '{} '.format(mark)
+
         if len(self.buffer) < numb:
+            ores, oexpect = strdiff('', expect)
+            self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
             return ''
 
-        return self.buffer.get(numb)
+        res = self.buffer.get(numb)
+
+        if expect and res != expect:
+            ores, oexpect = strdiff(res, expect)
+            self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+        if addr != '':
+            res = res[expect.find(addr):expect.find(addr)+len(addr)]
+        return res
 
     def recvuntil(self, delims, drop=False, timeout = default, expect = None, mark = ''):
         """recvuntil(delims, timeout = default) -> str

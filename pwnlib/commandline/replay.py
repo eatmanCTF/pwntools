@@ -82,9 +82,9 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--no-autofix',
+    '--no-addr',
     action = 'store_true',
-    help = 'Do not do auto fix',
+    help = 'Do not do address analysis',
 )
 
 parser.add_argument(
@@ -310,7 +310,7 @@ class Address(object):
 
     @staticmethod
     def trans_digital_amd64(value):
-        return ""
+        return str(value)
 
     @staticmethod
     def parse_digital_i386(data, i):
@@ -323,7 +323,7 @@ class Address(object):
 
     @staticmethod
     def trans_digital_i386(value):
-        return ""
+        return str(value)
 
     def transform(self):
         handlers = filter(lambda x: x['arch'] == context.arch and x['endian'] == context.endian and x['type'] == self.type, Address.get_handlers())
@@ -369,6 +369,9 @@ class Address(object):
             handler = handlers[0]
             for i in range(len(data)):
                 try:
+                    # TODO: now parser will stop when first valid address is met
+                    # i think it will cause conflict in some cases
+                    # may be we can parse address using elf's arch first?
                     res = handler['parser'](data, i)
                     if res is not None:
                         break
@@ -419,7 +422,7 @@ class PeerBytes(object):
     @staticmethod
     def _inline_content(d):
         if d == 34:
-            inline += '\\"'
+            return '\\"'
         elif d >= 32 and d <= 126:
             return chr(d)
         elif d == 10 or d == 13:
@@ -430,7 +433,7 @@ class PeerBytes(object):
     @staticmethod
     def _readable_content(d):
         if d == 34:
-            inline += '\\"'
+            return '\\"'
         elif d >= 32 and d <= 126:
             return chr(d)
         elif d == 10 or d == 13:
@@ -496,12 +499,18 @@ class DataFile(object):
                     val = raddr.val-saddr.val
                     self.offset_list.append({'recv': raddr, 'send': saddr, 'val': val, 'hex': hex(val), 'weight': 0})
 
+    def offset_list_content(self):
+        content = ""
+        for o in self.offset_list:
+            content += "offset:{} weight:{} recv_addr:{} send_addr:{}\n".format(o['hex'], o['weight'], o['recv'].hex, o['send'].hex)
+        return content
+        
     @staticmethod
     def compare(df1, df2):
         for of1 in df1.offset_list:
             for of2 in df2.offset_list:
                 # add weight if offset's value matches
-                if of1['val'] == of2['val']:
+                if of1['val'] == of2['val'] and of1['val'] != 0:
                     of1['weight'] += 1
                     of2['weight'] += 1
                     df1.weight += 1
@@ -512,8 +521,10 @@ class DataFile(object):
                         of2['weight'] += 1
                         df1.weight += 1
                         df2.weight += 1
-
-
+        # for o in df1.offset_list:
+        # print "========================================"
+        # for o in df2.offset_list:
+        #     print o['hex'], o['weight'], o['recv'].hex, o['send'].hex
 
 class ReplayScript(object):
     alternate_colors = [
@@ -549,7 +560,7 @@ class ReplayScript(object):
         self.df_list = []
         self.recv_timeout = args.timeout or 3
         self.no_comment = args.no_comment
-        self.no_fix = args.no_autofix
+        self.no_addr = args.no_addr
         self.template = DataFile(args.template) if args.template is not None else None
         self._alternate_color_count = -1
         self.recvuntil = args.recvuntil
@@ -580,6 +591,9 @@ class ReplayScript(object):
                 if df.name != self.template.name:
                     DataFile.compare(self.template, df)
 
+        for df in self.df_list:
+            log.debug("Offset in data_file {}".format(df.name) + "\n" + df.offset_list_content())
+
     def _output_comment(self, string, textcolor=None):
         if not textcolor:
             textcolor = text.magenta
@@ -595,7 +609,73 @@ class ReplayScript(object):
         self._alternate_color_count += 1
         return self.alternate_colors[self._alternate_color_count % len(self.alternate_colors)]
 
-    def generate(self):
+    def _render_recieved_peer(self, peer, valid_offset_list):
+        self._output_comment('Received peer{}_{}:\n'.format(peer.direction, peer.idx))
+        # recvived peer may be used by send peer several times
+        # TODO: (unlikely) received peer may contains several addresses
+        has_valid_addr = False
+        while not self.no_addr:
+            for vof in valid_offset_list:
+                if peer is vof['recv'].peer:
+                    raddr = vof['recv']
+                    if 'color' not in vof:
+                        vof['color'] = self._get_alternate_color() 
+                    self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], raddr.hex, raddr.position, vof['hex']), vof['color'])
+                    if not has_valid_addr:
+                        self._output('io.recvn({})\n'.format(raddr.position))
+                        self._output('tmp = Address.parseAs(io.recvn({}), "{}", "{}", "{}")\n'.format(raddr.length, context.arch, context.endian, raddr.type))
+                        self._output('addr_recv_{} = tmp\n'.format(vof['id']))
+                        self._output('io.recvn({}, timeout={})\n'.format(peer.length - int(raddr.position) - raddr.length, self.recv_timeout))
+                        has_valid_addr = True
+                    else:
+                        self._output('addr_recv_{} = tmp\n'.format(vof['id']))
+            if not has_valid_addr:
+                break
+            else:
+                return
+        if self.recvuntil and not has_valid_addr:
+                self._output('io.recvuntil("{}", timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
+                    peer.get_inline_content(-5 if peer.length >= 5 else -1), self.recv_timeout, peer.inline_content, peer.idx))
+        elif not has_valid_addr:
+            self._output('io.recvn({}, timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
+                peer.length, self.recv_timeout, peer.inline_content, peer.idx))
+
+    def _render_send_peer(self, peer, valid_offset_list):
+        self._output_comment('Sending peer{}_{}:\n'.format(peer.direction, peer.idx))
+        # send peer may contains several addresses
+        has_valid_addr = False
+        while not self.no_addr:
+            # numb is how many bytes has added to payload
+            numb = 0
+            for vof in valid_offset_list:
+                if peer is vof['send'].peer:
+                    raddr = vof['recv']
+                    saddr = vof['send']
+                    if numb > int(saddr.position):
+                        log.warn('address conflict in peer0_{}\naddr: {} at {}, but {} has added'.format(peer.idx, saddr.hex, saddr.position, numb))
+                        continue
+                    if not has_valid_addr:
+                        has_valid_addr = True
+                        self._output('payload = ""\n')
+                    if 'color' not in vof:
+                        vof['color'] = self._get_alternate_color() 
+                    self._output_comment('[VOF_S{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], saddr.hex, saddr.position, vof['hex']), vof['color'])
+                    self._output('addr_send_{} = addr_recv_{} - {} + {}\n'.format(vof['id'], vof['id'], raddr.hex, saddr.hex))
+                    self._output('payload += "{}"\n'.format(peer.get_inline_content(numb, int(saddr.position))))
+                    addr_length = saddr.transform()[1]
+                    self._output('payload += Address.transformAs(addr_send_{}, "{}", "{}", "{}")\n'.format(vof['id'], context.arch, context.endian, saddr.type))
+                    numb = int(saddr.position) + addr_length
+            if not has_valid_addr:
+                break
+            else:
+                self._output('payload += "{}"\n'.format(peer.get_inline_content(numb)))
+                self._output('io.send(payload)\n')
+                return    
+        self._output('payload = "{}"\n'.format(peer.inline_content))
+        # inline_content will translate to actual content in expect
+        self._output('io.send(payload, expect="{}", mark="peer_0_{}")\n'.format(peer.inline_content, peer.idx))
+
+    def render(self):
         df = self.template
         valid_offset_list = []
         self._output('\n'.join(self.content).format(self.host, self.port, self.elf.file.name) + '\n')
@@ -610,67 +690,38 @@ class ReplayScript(object):
                         valid_offset = offset
                         valid_offset['id'] = i
             if valid_offset:
-                valid_offset_list.append(valid_offset)
-
+                is_valid = True
+                for (i, offset) in enumerate(valid_offset_list):
+                    osaddr = offset['send']
+                    vosaddr = valid_offset['send']
+                    if vosaddr.peer is osaddr.peer and vosaddr.position != osaddr.position:
+                        log.debug("More than one send address in a peer:")
+                        log.debug("send_addr:{}, position:{}, length:{}".format(vosaddr.hex, vosaddr.position, vosaddr.length))
+                        log.debug("send_addr:{}, position:{}, length:{}".format(osaddr.hex, osaddr.position, osaddr.length))
+                        if (vosaddr.position + vosaddr.length > osaddr.position and osaddr.position >= vosaddr.position) or (osaddr.position + osaddr.length > vosaddr.position and vosaddr.position >= osaddr.position):
+                            # conflict
+                            if valid_offset['weight'] > offset['weight']:
+                                valid_offset_list.remove(offset)
+                            else:
+                                is_valid = False
+                                continue
+                if is_valid:
+                    valid_offset_list.append(valid_offset)
+        # TODO: should we reorder valid_offset_list?
+        log.debug('valid_offset_list')
+        for o in valid_offset_list:
+            log.debug("offset:{} weight:{} recv_addr:{} send_addr:{}\n".format(o['hex'], o['weight'], o['recv'].hex, o['send'].hex)) 
         for peer in df.peer_list:
             if peer.direction == DIRECTION_RECV:
-                self._output_comment('Received peer{}_{}:\n'.format(peer.direction, peer.idx))
-                # recvived peer may be repeated
-                recvived = False
-                for vof in valid_offset_list:
-                    if peer is vof['recv'].peer:
-                        raddr = vof['recv']
-                        if 'color' not in vof:
-                            vof['color'] = self._get_alternate_color() 
-                        self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], raddr.hex, raddr.position, vof['hex']), vof['color'])
-                        if not self.no_fix:
-                            if not recvived:
-                                self._output('io.recvn({})\n'.format(raddr.position))
-                                self._output('tmp = Address.parseAs(io.recvn({}), "{}", "{}", "{}")\n'.format(raddr.length, context.arch, context.endian, raddr.type))
-                                self._output('addr_recv_{} = tmp\n'.format(vof['id']))
-                                self._output('io.recvn({}, timeout={})\n'.format(peer.length - int(raddr.position) - raddr.length, self.recv_timeout))
-                                recvived = True
-                            else:
-                                self._output('addr_recv_{} = tmp\n'.format(vof['id']))
-                        else:
-                            break
-                else:
-                    if self.recvuntil and not recvived:
-                        self._output('io.recvuntil("{}", timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
-                            peer.get_inline_content(-5 if peer.length >= 5 else -1), self.recv_timeout, peer.inline_content, peer.idx))
-                    elif not recvived:
-                        self._output('io.recvn({}, timeout={}, expect="{}", mark="peer_1_{}")\n'.format(
-                            peer.length, self.recv_timeout, peer.inline_content, peer.idx))
+                self._render_recieved_peer(peer, valid_offset_list)
             elif peer.direction == DIRECTION_SEND:
-                self._output_comment('Sending peer{}_{}:\n'.format(peer.direction, peer.idx))
-                # send peer will not be repeated
-                for vof in valid_offset_list:
-                    if peer is vof['send'].peer:
-                        raddr = vof['recv']
-                        saddr = vof['send']
-                        if 'color' not in vof:
-                            vof['color'] = self._get_alternate_color() 
-                        self._output_comment('[VOF_S{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(vof['id'], saddr.hex, saddr.position, vof['hex']), vof['color'])
-                        if not self.no_fix:
-                            self._output('addr_send_{} = addr_recv_{} - {} + {}\n'.format(vof['id'], vof['id'], raddr.hex, saddr.hex))
-                            self._output('payload = "{}"\n'.format(peer.get_inline_content(0, int(saddr.position))))
-                            addr_length = saddr.transform()[1]
-                            self._output('payload += Address.transformAs(addr_send_{}, "{}", "{}", "{}")\n'.format(vof['id'], context.arch, context.endian, saddr.type))
-                            self._output('payload += "{}"\n'.format(peer.get_inline_content(int(saddr.position)+addr_length)))
-                            self._output('io.send(payload)\n')
-                        else:
-                            self._output('payload = "{}"'.format(peer.inline_content))
-                            self._output('io.send(payload)\n')
-                        break
-                else:
-                    self._output('payload = "{}"\n'.format(peer.inline_content))
-                    self._output('io.send(payload)\n')
+                self._render_send_peer(peer, valid_offset_list)
         sys.stdout.write('io.interactive()\n')
 
 
 def main(args):
     rs = ReplayScript(args)
-    rs.generate()
+    rs.render()
 
 if __name__ == '__main__':
     pwnlib.commandline.common.main(__file__)

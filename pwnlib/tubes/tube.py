@@ -22,6 +22,12 @@ from pwnlib.util import misc
 from pwnlib.util import packing
 from pwnlib.term import text
 
+def hex_string(string):
+    hexstr = ''
+    for c in string:
+        hexstr += '\\x' + hex(ord(c))[2:].rjust(2, '0')
+    return hexstr
+    
 def inline_string(string):
     inline = ''
     for c in string:
@@ -37,23 +43,46 @@ def inline_string(string):
     return inline
 
 def strdiff(str1, str2):
-    matches = difflib.SequenceMatcher(None, str1, str2).get_matching_blocks()
-    # matches.sort(key=lambda x:x.size, reverse=True)
-    rendering_bytes_1 = 0
-    rendering_bytes_2 = 0
-    out1 = ""
-    out2 = ""
-    for m in matches:
-        if rendering_bytes_1 <= m.a and rendering_bytes_2 <= m.b:
-            out1 += text.red(inline_string(str1[rendering_bytes_1:m.a]))
-            out2 += text.yellow(inline_string(str2[rendering_bytes_2:m.b]))
-            rendering_bytes_1 = m.a
-            rendering_bytes_2 = m.b
-            out1 += inline_string(str1[m.a:m.a+m.size])
-            out2 += inline_string(str2[m.b:m.b+m.size])
-            rendering_bytes_1 += m.size
-            rendering_bytes_2 += m.size
-    return out1, out2
+    def _difflib_cmp(str1, str2):
+        matches = difflib.SequenceMatcher(None, str1, str2).get_matching_blocks()
+        rendering_bytes_1 = 0
+        rendering_bytes_2 = 0
+        out1 = ""
+        out2 = ""
+        mout = []
+        for m in matches:
+            if rendering_bytes_1 <= m.a and rendering_bytes_2 <= m.b:
+                mout.append(m)
+                out1 += text.red(inline_string(str1[rendering_bytes_1:m.a]))
+                out2 += text.yellow(inline_string(str2[rendering_bytes_2:m.b]))
+                rendering_bytes_1 = m.a
+                rendering_bytes_2 = m.b
+                out1 += inline_string(str1[m.a:m.a+m.size])
+                out2 += inline_string(str2[m.b:m.b+m.size])
+                rendering_bytes_1 += m.size
+                rendering_bytes_2 += m.size
+        return out1, out2, []
+    def _basic_cmp(str1, str2):
+        # length = len(str1) if len(str1) <= len(str2) else len(str2)
+        out1 = ""
+        out2 = ""
+        not_match = set()
+        for i in range(len(str1)):
+            if i <= len(str2):
+                if str1[i] != str2[i]:
+                    out1 += text.red(inline_string(str1[i]))
+                    not_match.add(i)
+                    continue
+            out1 += inline_string(str1[i])
+        for i in range(len(str2)):
+            if i <= len(str1):
+                if str2[i] != str1[i]:
+                    out2 += text.yellow(inline_string(str2[i]))
+                    not_match.add(i)
+                    continue
+            out2 += inline_string(str2[i])
+        return out1, out2, not_match
+    return _basic_cmp(str1, str2)
 
 class tube(Timeout, Logger):
     """
@@ -76,6 +105,43 @@ class tube(Timeout, Logger):
 
         self.buffer = Buffer(*a, **kw)
         atexit.register(self.close)
+
+    def debug_log_data(self, data, level = logging.DEBUG):
+        if len(set(data)) == 1 and len(data) > 1:
+            self.indented('%r * %#x' % (data[0], len(data)), level=level)
+        elif all(c in string.printable for c in data):
+            for line in data.splitlines(True):
+                self.indented(repr(line), level = level)
+        else:
+            self.indented(fiddling.hexdump(data), level = level)
+
+    def _compare(self, res, expect, mark):
+        expect_hexdump_style = {
+                'marker':       text.white,
+                'nonprintable': text.white,
+                '00':           text.white,
+                '0a':           text.white,
+                'ff':           text.white,
+                'special':      text.yellow,
+            }
+        recevid_hexdump_style = {
+            'marker':       text.white,
+            'nonprintable': text.white,
+            '00':           text.white,
+            '0a':           text.white,
+            'ff':           text.white,
+            'special':      text.red,
+        }
+        if mark:
+            mark = '{} '.format(mark)
+        ores, oexpect, not_match = strdiff(res, expect)
+        warn = text.blue(mark) + '\nExpected: ' + oexpect + '\n'
+        if not self.isEnabledFor(logging.DEBUG):
+            warn += fiddling.hexdump(expect, style=expect_hexdump_style, special=not_match)
+        warn += '\nRecieved: ' + ores + '\n'
+        if not self.isEnabledFor(logging.DEBUG):
+            warn += fiddling.hexdump(res, style=recevid_hexdump_style, special=not_match)
+        self.warn(warn)
 
     # Functions based on functions from subclasses
     def recv(self, numb = None, timeout = default, expect = None, mark=''):
@@ -113,9 +179,9 @@ class tube(Timeout, Logger):
         res = self._recv(numb, timeout) or ''
         if mark:
             mark = '{} '.format(mark)
-        if expect and res != expect:
-            ores, oexpect = strdiff(res, expect)
-            self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+        # if expect and res != expect:
+        #     ores, oexpect = strdiff(res, expect)
+        #     self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
         return res
 
     def unrecv(self, data):
@@ -168,14 +234,7 @@ class tube(Timeout, Logger):
 
         if data and self.isEnabledFor(logging.DEBUG):
             self.debug('Received %#x bytes:' % len(data))
-
-            if len(set(data)) == 1 and len(data) > 1:
-                self.indented('%r * %#x' % (data[0], len(data)), level = logging.DEBUG)
-            elif all(c in string.printable for c in data):
-                for line in data.splitlines(True):
-                    self.indented(repr(line), level = logging.DEBUG)
-            else:
-                self.indented(fiddling.hexdump(data), level = logging.DEBUG)
+            self.debug_log_data(data)
 
         if data:
             self.buffer.add(data)
@@ -279,19 +338,17 @@ class tube(Timeout, Logger):
             while self.countdown_active() and len(self.buffer) < numb and self._fillbuffer(self.timeout):
                 pass
 
-        if mark:
-            mark = '{} '.format(mark)
-
         if len(self.buffer) < numb:
-            ores, oexpect = strdiff('', expect)
-            self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+            # ores, oexpect, matches = strdiff('', expect)
+            # print matches
+            # self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
             return ''
 
         res = self.buffer.get(numb)
 
+        ## eatman: compare output with expect
         if expect and res != expect:
-            ores, oexpect = strdiff(res, expect)
-            self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+            self._compare(res, expect, mark)
         if addr != '':
             res = res[expect.find(addr):expect.find(addr)+len(addr)]
         return res
@@ -380,9 +437,9 @@ class tube(Timeout, Logger):
                     res = ''.join(data) + top
                     if mark:
                         mark = '{} '.format(mark)
-                    if expect and res != expect:
-                        ores, oexpect = strdiff(res, expect)
-                        self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
+                    # if expect and res != expect:
+                    #     ores, oexpect = strdiff(res, expect)
+                    #     self.warn(text.blue(mark) + 'Expected: ' + oexpect + '\n' + text.blue(mark) + 'Recieved: ' + ores)
                     return res
                 if len(top) > longest:
                     i = -longest - 1
@@ -734,7 +791,7 @@ class tube(Timeout, Logger):
 
         return self.buffer.get()
 
-    def send(self, data):
+    def send(self, data, expect = None, mark=''):
         """send(data)
 
         Sends data.
@@ -756,13 +813,10 @@ class tube(Timeout, Logger):
 
         if self.isEnabledFor(logging.DEBUG):
             self.debug('Sent %#x bytes:' % len(data))
-            if len(set(data)) == 1:
-                self.indented('%r * %#x' % (data[0], len(data)))
-            elif all(c in string.printable for c in data):
-                for line in data.splitlines(True):
-                    self.indented(repr(line), level = logging.DEBUG)
-            else:
-                self.indented(fiddling.hexdump(data), level = logging.DEBUG)
+            self.debug_log_data(data)
+        ## eatman: compare send_data with expect
+        if expect and data != expect:
+            self._compare(data, expect, mark)
         self.send_raw(data)
 
     def sendline(self, line=''):

@@ -29,12 +29,11 @@ class Pcap:
     def __init__(self, filename, filter="tcp"):
         self.filename = filename
         self.pkts = sniff(offline=filename, filter=filter)
-        self.sessions = self.pkts.sessions()
         self.streams = self.streams()
 
     def streams(self):
-        """stream对应的是往返ip和端口的所有数据包,返回数组：[('127.0.0.1:4444', '127.0.0.1:57532')]"""
-        return list(set(tuple(sorted(session.replace("TCP ", "").split(" > "))) for session in self.sessions.keys()))
+        """stream对应的是往返ip和端口的所有数据包,返回数组：[('192.168.127.132', 59406, '123.115.4.184', 9999)]"""
+        return [self.get_ip_and_port(p) for p in self.pkts if p.getlayer(TCP).flags.flagrepr() == 'S']
 
     def search(self, data):
         """返回在tcp层数据存在data的pkt列表，其中data是bytes格式"""

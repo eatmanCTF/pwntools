@@ -43,24 +43,26 @@ for filename in glob.glob('pwnlib/commandline/*'):
     if not flag:
         console_scripts.append(script)
 
-install_requires     = ['paramiko>=1.15.2',
-                        'mako>=1.0.0',
-                        'pyelftools>=0.2.4',
-                        'capstone>=3.0.5rc2', # See Gallopsled/pwntools#971, Gallopsled/pwntools#1160
-                        'ropgadget>=5.3',
-                        'pyserial>=2.7',
-                        'requests>=2.0',
-                        'pip>=6.0.8',
-                        'tox>=1.8.1',
-                        'pygments>=2.0',
-                        'pysocks',
-                        'python-dateutil',
-                        'packaging',
-                        'psutil>=3.3.0',
-                        'intervaltree==2.1.0',
-                        'sortedcontainers<2.0', # See Gallopsled/pwntools#1154
-			'numpy',
-                        'unicorn']
+install_requires = ['paramiko>=1.15.2',
+                    'mako>=1.0.0',
+                    'pyelftools>=0.2.4',
+                    'capstone>=3.0.5rc2',  # See Gallopsled/pwntools#971, Gallopsled/pwntools#1160
+                    'ropgadget>=5.3',
+                    'pyserial>=2.7',
+                    'requests>=2.0',
+                    'pip>=6.0.8',
+                    'tox>=1.8.1',
+                    'pygments>=2.0',
+                    'pysocks',
+                    'python-dateutil',
+                    'packaging',
+                    'psutil>=3.3.0',
+                    'intervaltree==2.1.0',
+                    'sortedcontainers<2.0',  # See Gallopsled/pwntools#1154
+                    'numpy',
+                    'scapy',
+                    'future',
+                    'unicorn']
 
 # Check that the user has installed the Python development headers
 PythonH = os.path.join(get_python_inc(), 'Python.h')
@@ -78,14 +80,14 @@ except Exception as e:
     traceback.print_exc()
 
 setup(
-    name                 = 'pwntools',
-    python_requires      = '~=2.7',
-    packages             = find_packages(),
-    version              = '3.14.0dev',
-    data_files           = [('',
-                             glob.glob('*.md') + glob.glob('*.txt')),
-                            ],
-    package_data         = {
+    name='pwntools',
+    python_requires='~=2.7',
+    packages=find_packages(),
+    version='3.14.0dev',
+    data_files=[('',
+                 glob.glob('*.md') + glob.glob('*.txt')),
+                ],
+    package_data={
         'pwnlib': [
             'data/crcsums.txt',
             'data/useragents/useragents.txt',
@@ -95,18 +97,18 @@ setup(
             'data/templates/*.mako',
         ] + templates,
     },
-    entry_points = {'console_scripts': console_scripts},
-    scripts              = glob.glob("bin/*"),
-    description          = "Pwntools CTF framework and exploit development library.",
-    long_description     = long_description,
-    author               = "Gallopsled et al.",
-    author_email         = "pwntools-users@googlegroups.com",
-    url                  = 'https://pwntools.com',
-    download_url         = "https://github.com/Gallopsled/pwntools/releases",
-    install_requires     = install_requires,
-    license              = "Mostly MIT, some GPL/BSD, see LICENSE-pwntools.txt",
-    keywords             = 'pwntools exploit ctf capture the flag binary wargame overflow stack heap defcon',
-    classifiers          = [
+    entry_points={'console_scripts': console_scripts},
+    scripts=glob.glob("bin/*"),
+    description="Pwntools CTF framework and exploit development library.",
+    long_description=long_description,
+    author="Gallopsled et al.",
+    author_email="pwntools-users@googlegroups.com",
+    url='https://pwntools.com',
+    download_url="https://github.com/Gallopsled/pwntools/releases",
+    install_requires=install_requires,
+    license="Mostly MIT, some GPL/BSD, see LICENSE-pwntools.txt",
+    keywords='pwntools exploit ctf capture the flag binary wargame overflow stack heap defcon',
+    classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Environment :: Console',
         'Intended Audience :: Developers',

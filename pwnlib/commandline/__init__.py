@@ -13,6 +13,7 @@ __all__ = [
     'errno',
     'hex',
     'main',
+    'pcap',
     'phd',
     'pwnstrip',
     'replay',

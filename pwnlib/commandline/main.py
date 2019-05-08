@@ -22,6 +22,7 @@ from pwnlib.commandline import shellcraft
 from pwnlib.commandline import template
 from pwnlib.commandline import unhex
 from pwnlib.commandline import update
+from pwnlib.commandline import pcap
 from pwnlib.commandline.common import parser
 from pwnlib.context import context
 
@@ -45,12 +46,15 @@ commands = {
     'template': template.main,
     'unhex': unhex.main,
     'update': update.main,
+    'pcap': pcap.main
 }
+
 
 def main():
     args = parser.parse_args()
-    with context.local(log_console = sys.stderr):
+    with context.local(log_console=sys.stderr):
         commands[args.command](args)
+
 
 if __name__ == '__main__':
     main()

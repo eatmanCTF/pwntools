@@ -27,9 +27,9 @@ from pwnlib.commandline import common
 
 
 class Pcap:
-    def __init__(self, filename, filter="tcp"):
+    def __init__(self, filename):
         self.filename = filename
-        self.pkts = sniff(offline=filename, filter=filter)
+        self.pkts = sniff(offline=filename)
         self.streams = self.streams()
 
     def streams(self):

@@ -10,6 +10,7 @@ import json
 import string
 import re
 import os
+import ipaddress
 from scapy.all import *
 from builtins import bytes
 
@@ -123,6 +124,39 @@ class Pcap:
         wrpcap(filename, pkts)
 
 
+class Config:
+    def __init__(self, path="config.json"):
+        if not os.path.exists(path):
+            config = {
+                "teams": {
+                    "team1": "127.0.0.1/32"
+                },
+                "gameboxs": {
+                    "suffarring": "127.0.0.1:4444"
+                }
+            }
+            with open("config.json", 'w') as outfile:
+                json.dump(config, outfile, indent=4)
+
+        config = json.load(open(path))
+        self.gameboxs = config["gameboxs"]
+        self.teams = config["teams"]
+
+    def get_gamebox_name(self, ip, port):
+        conn = "{}:{}".format(ip, port)
+        for name, value in self.gameboxs.items():
+            if value == conn:
+                return name
+        return conn
+
+    def get_team_name(self, ip):
+        ip = ipaddress.ip_address(unicode(ip))
+        for team, net in self.teams.items():
+            if ip in ipaddress.ip_network(unicode(net)):
+                return team
+        return ip
+
+
 parser = common.parser_commands.add_parser(
     'pcap',
     help="pcap"
@@ -165,6 +199,7 @@ parser.add_argument(
 
 def main(args):
     pcap = Pcap(args.pcap_file)
+    config = Config()
 
     if args.list:
         for stream in pcap.streams:
@@ -185,8 +220,8 @@ def main(args):
         for p in pkts:
             stream = pcap.follow_tcp_stream(p)
             src, sport, dst, dport = pcap.get_ip_and_port(stream[0])
-            home_dir = "{}_{}".format(dst, dport)
-            sub_dir = "{}/{}".format(home_dir, src)
+            home_dir = config.get_gamebox_name(dst, dport)
+            sub_dir = "{}/{}".format(home_dir, config.get_team_name(src))
             out_path = "{}/{}.json".format(sub_dir, stream[0].time)
             log.info("保存数据到文件:{}".format(out_path))
             if not os.path.exists(home_dir):

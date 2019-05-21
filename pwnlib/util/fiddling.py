@@ -561,6 +561,7 @@ default_style = {
     '00':           text.red,
     '0a':           text.red,
     'ff':           text.green,
+    'special':      text.white,
 }
 
 cyclic_pregen = ''
@@ -575,7 +576,7 @@ def update_cyclic_pregenerated(size):
         cyclic_pregen += next(de_bruijn_gen)
 
 def hexdump_iter(fd, width=16, skip=True, hexii=False, begin=0, style=None,
-                 highlight=None, cyclic=False, groupsize=4):
+                 highlight=None, cyclic=False, groupsize=4, special=[]):
     r"""hexdump_iter(s, width = 16, skip = True, hexii = False, begin = 0,
                     style = None, highlight = None, cyclic = False, groupsize=4) -> str generator
 
@@ -614,6 +615,7 @@ def hexdump_iter(fd, width=16, skip=True, hexii=False, begin=0, style=None,
     """
     style     = style or {}
     highlight = highlight or []
+    special = special or []
 
     if groupsize < 1:
         groupsize = width
@@ -633,22 +635,33 @@ def hexdump_iter(fd, width=16, skip=True, hexii=False, begin=0, style=None,
     spacer      = ' '
     marker      = (style.get('marker') or (lambda s:s))('│')
 
-    if not hexii:
-        def style_byte(b):
-            hbyte = '%02x' % ord(b)
-            abyte = b if isprint(b) else '·'
-            if hbyte in style:
-                st = style[hbyte]
-            elif isprint(b):
-                st = style.get('printable')
-            else:
-                st = style.get('nonprintable')
-            if st:
-                hbyte = st(hbyte)
-                abyte = st(abyte)
-            return hbyte, abyte
-        cache = [style_byte(chr(b)) for b in range(256)]
+    def style_byte(b, special=[]):
+        hbyte = '%02x' % ord(b)
+        abyte = b if isprint(b) else '·'
+        if hbyte in style:
+            st = style[hbyte]
+        elif isprint(b):
+            st = style.get('printable')
+        else:
+            st = style.get('nonprintable')
 
+        if special:
+            st = text.white
+        if st:
+            hbyte = st(hbyte)
+            abyte = st(abyte)
+        return hbyte, abyte
+
+    def style_special(b):
+        hbyte = '%02x' % ord(b)
+        abyte = b if isprint(b) else '·'
+        st = style.get('special')
+        hbyte = st(hbyte)
+        abyte = st(abyte)
+        return hbyte, abyte
+
+    if not hexii:
+        cache = [style_byte(chr(b), special) for b in range(256)]
     numb = 0
     while True:
         offset = begin + numb
@@ -701,7 +714,10 @@ def hexdump_iter(fd, width=16, skip=True, hexii=False, begin=0, style=None,
         for i, b in enumerate(chunk):
             if not hexii:
                 abyte_previous = abyte
-                hbyte, abyte = cache[ord(b)]
+                if numb + i - len(chunk) not in special:
+                    hbyte, abyte = cache[ord(b)]
+                else:
+                    hbyte, abyte = style_special(b)
                 color_chars += len(hbyte) - 2
             else:
                 hbyte, abyte = _hexiichar(b), ''
@@ -736,7 +752,7 @@ def hexdump_iter(fd, width=16, skip=True, hexii=False, begin=0, style=None,
     yield line
 
 def hexdump(s, width=16, skip=True, hexii=False, begin=0,
-            style=None, highlight=None, cyclic=False, groupsize=4):
+            style=None, highlight=None, cyclic=False, groupsize=4, special=[]):
     r"""hexdump(s, width = 16, skip = True, hexii = False, begin = 0,
                style = None, highlight = None, cyclic = False, groupsize=4) -> str generator
 
@@ -921,7 +937,8 @@ def hexdump(s, width=16, skip=True, hexii=False, begin=0,
                                   style,
                                   highlight,
                                   cyclic,
-                                  groupsize))
+                                  groupsize,
+                                  special))
 
 def negate(value, width = None):
     """

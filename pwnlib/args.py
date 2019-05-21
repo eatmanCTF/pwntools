@@ -131,6 +131,10 @@ def DEBUG(x):
     more information, including logging each byte sent by tubes."""
     LOG_LEVEL('debug')
 
+def INFO(x):
+    """Sets the logging verbosity to ``info`` which used by replay script."""
+    LOG_LEVEL('info')
+
 def NOTERM(v):
     """Disables pretty terminal settings and animations."""
     if asbool(v):

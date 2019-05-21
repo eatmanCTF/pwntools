@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import difflib
 
 from pwnlib import atexit
 from pwnlib import term
@@ -19,7 +20,199 @@ from pwnlib.tubes.buffer import Buffer
 from pwnlib.util import fiddling
 from pwnlib.util import misc
 from pwnlib.util import packing
+from pwnlib.term import text
 
+def hex_string(string):
+    hexstr = ''
+    for c in string:
+        hexstr += '\\x' + hex(ord(c))[2:].rjust(2, '0')
+    return hexstr
+    
+def inline_string(string):
+    inline = ''
+    for c in string:
+        d = ord(c)
+        if d == 34:
+            inline += '\\"'
+        elif d >= 32 and d <= 126:
+            inline += c
+        elif d == 10 or d == 13:
+            inline += '\\n'
+        else:
+            inline += '\\x' + hex(d)[2:].rjust(2, '0')
+    return inline
+
+def strdiff(str1, str2, color1='red', color2='yellow'):
+    str1_color = text.get(color1)
+    str2_color = text.get(color2)
+    def _difflib_cmp(str1, str2):
+        matches = difflib.SequenceMatcher(None, str1, str2).get_matching_blocks()
+        rendering_bytes_1 = 0
+        rendering_bytes_2 = 0
+        out1 = ""
+        out2 = ""
+        mout = []
+        for m in matches:
+            if rendering_bytes_1 <= m.a and rendering_bytes_2 <= m.b:
+                mout.append(m)
+                out1 += str1_color(inline_string(str1[rendering_bytes_1:m.a]))
+                out2 += str2_color(inline_string(str2[rendering_bytes_2:m.b]))
+                rendering_bytes_1 = m.a
+                rendering_bytes_2 = m.b
+                out1 += inline_string(str1[m.a:m.a+m.size])
+                out2 += inline_string(str2[m.b:m.b+m.size])
+                rendering_bytes_1 += m.size
+                rendering_bytes_2 += m.size
+        return out1, out2, []
+    def _basic_cmp(str1, str2):
+        # length = len(str1) if len(str1) <= len(str2) else len(str2)
+        out1 = ""
+        out2 = ""
+        not_match = set()
+        for i in range(len(str1)):
+            if i < len(str2):
+                if str1[i] != str2[i]:
+                    out1 += str1_color(inline_string(str1[i]))
+                    not_match.add(i)
+                    continue
+            out1 += inline_string(str1[i])
+        for i in range(len(str2)):
+            if i < len(str1):
+                if str2[i] != str1[i]:
+                    out2 += str2_color(inline_string(str2[i]))
+                    not_match.add(i)
+                    continue
+            out2 += inline_string(str2[i])
+        return out1, out2, not_match
+    return _basic_cmp(str1, str2)
+
+def expect(func):
+    def wrapper(self, *args, **kw):
+        template_data = kw.pop('template', '')
+        expect_data = kw.pop('expect', '')
+        mark = kw.pop('mark', '')
+        retrieve = kw.pop('retrieve', '')
+        pause = kw.pop('pause', False)
+        res = func(self, *args, **kw)
+
+        if not template_data:
+            return res
+            
+        template_hexdump_style = {
+            'marker':       text.white,
+            'nonprintable': text.white,
+            '00':           text.white,
+            '0a':           text.white,
+            'ff':           text.white,
+            'special':      text.yellow,
+        }
+        expect_hexdump_style = {
+            'marker':       text.white,
+            'nonprintable': text.white,
+            '00':           text.white,
+            '0a':           text.white,
+            'ff':           text.white,
+            'special':      text.green,
+        }
+        received_hexdump_style = {
+            'marker':       text.white,
+            'nonprintable': text.white,
+            '00':           text.white,
+            '0a':           text.white,
+            'ff':           text.white,
+            'special':      text.red,
+        }
+
+        if res:
+            if template_data == res:
+                self.success("{:<60}{}".format(text.blue(mark), text.green('Received peer is same as template!')))
+            elif not expect_data and template_data != res:
+            # Case1: no expect and template != res, hexdump template and res
+                ores, oexpect, not_match = strdiff(res, template_data)
+                warn = '{:<60}{}'.format(text.blue(mark), text.red('Received peer is different from template!'))
+                warn += '\nExpected:\n'
+                if not self.isEnabledFor(logging.DEBUG):
+                    warn += fiddling.hexdump(template_data, style=template_hexdump_style, special=not_match)
+                warn += '\nRecieved:\n'
+                if not self.isEnabledFor(logging.DEBUG):
+                    warn += fiddling.hexdump(res, style=received_hexdump_style, special=not_match)
+                self.warn(warn)
+                if pause:
+                    raw_input('Press enter to continue...')
+            elif expect_data:
+                if expect_data == res:
+                    # Case2: expect and expect == res, print template, and res
+                    ores, otemplate, not_match = strdiff(res, template_data, color1='green')
+                    warn = '{:<60}{}'.format(text.blue(mark), text.green('Received peer is same as expected!'))
+                    warn += '\n\t' + otemplate + '\n==> ' + ores
+                    self.success(warn)
+                else:
+                    # Case3: expect and expect != res, hexdump template, expect and res
+                    oexpect, otemplate, not_match = strdiff(expect_data, template_data)
+                    warn = '{:<60}{}'.format(text.blue(mark), text.red('Received peer is different from expected!'))
+                    warn += '\nExpected:\n'
+                    if not self.isEnabledFor(logging.DEBUG):
+                        warn += fiddling.hexdump(expect_data, style=expect_hexdump_style, special=not_match)
+                    oexpect, ores, not_match = strdiff(expect_data, res)
+                    warn += '\nRecieved:\n'
+                    if not self.isEnabledFor(logging.DEBUG):
+                        warn += fiddling.hexdump(res, style=received_hexdump_style, special=not_match)
+                    self.warn(warn)
+                    if pause:
+                        raw_input('Press enter to continue...')
+
+        if isinstance(retrieve, tuple):
+            """
+            ((start, end), ("start_character", "end_character")...)
+            """
+            temp = []
+            for start, end in retrieve:
+                if isinstance(start, str):
+                    start = res.find(start)
+                if isinstance(end, str):
+                    start = res.find(end)
+                temp.append(res[start:end])
+            res = temp
+        elif isinstance(retrieve, str) and retrieve != '':
+            res = res[template_data.find(retrieve):template_data.find(retrieve)+len(retrieve)]
+        return res
+    return wrapper
+
+def mark_different(func):
+    def wrapper(self, *args, **kw):
+        different_list = kw.pop('different', '')
+        mark = kw.pop('mark', '')
+        pause = kw.pop('pause', False)
+        data = args[0]
+        res = func(self, *args, **kw)
+
+        if not different_list:
+            return res
+        different_hexdump_style = {
+            'marker':       text.white,
+            'nonprintable': text.white,
+            '00':           text.white,
+            '0a':           text.white,
+            'ff':           text.white,
+            'special':      text.red,
+        }
+        warn = "{:<60}{}\n".format(text.blue(mark), text.red('Send peer contains different!'))
+        different_list.sort(key=lambda item: item[0])
+        numb = 0
+        not_match = []
+        for start, end in different_list:
+            not_match += range(start, end)
+            if numb <= start:
+                warn += text.white(data[numb:start])
+                warn += text.red(data[start:end])
+                numb = end
+        warn += text.white(data[numb:] + "\n")
+        warn += fiddling.hexdump(data, style=different_hexdump_style, special=not_match)
+        self.warn(warn)
+        if pause:
+            raw_input('Press enter to continue...')
+        return res
+    return wrapper
 
 class tube(Timeout, Logger):
     """
@@ -43,7 +236,17 @@ class tube(Timeout, Logger):
         self.buffer = Buffer(*a, **kw)
         atexit.register(self.close)
 
+    def debug_log_data(self, data, level = logging.DEBUG):
+        if len(set(data)) == 1 and len(data) > 1:
+            self.indented('%r * %#x' % (data[0], len(data)), level=level)
+        elif all(c in string.printable for c in data):
+            for line in data.splitlines(True):
+                self.indented(repr(line), level = level)
+        else:
+            self.indented(fiddling.hexdump(data), level = level)
+
     # Functions based on functions from subclasses
+    @expect
     def recv(self, numb = None, timeout = default):
         r"""recv(numb = 4096, timeout = default) -> str
 
@@ -128,14 +331,7 @@ class tube(Timeout, Logger):
 
         if data and self.isEnabledFor(logging.DEBUG):
             self.debug('Received %#x bytes:' % len(data))
-
-            if len(set(data)) == 1 and len(data) > 1:
-                self.indented('%r * %#x' % (data[0], len(data)), level = logging.DEBUG)
-            elif all(c in string.printable for c in data):
-                for line in data.splitlines(True):
-                    self.indented(repr(line), level = logging.DEBUG)
-            else:
-                self.indented(fiddling.hexdump(data), level = logging.DEBUG)
+            self.debug_log_data(data)
 
         if data:
             self.buffer.add(data)
@@ -150,7 +346,6 @@ class tube(Timeout, Logger):
         buffer is empty.
         """
         numb = self.buffer.get_fill_size(numb)
-        data = ''
 
         # No buffered data, could not put anything in the buffer
         # before timeout.
@@ -198,7 +393,8 @@ class tube(Timeout, Logger):
 
         return data
 
-    def recvn(self, numb, timeout = default):
+    @expect
+    def recvn(self, numb, timeout = default, expect = None, mark='', addr=''):
         """recvn(numb, timeout = default) -> str
 
         Receives exactly `n` bytes.
@@ -244,6 +440,7 @@ class tube(Timeout, Logger):
 
         return self.buffer.get(numb)
 
+    @expect
     def recvuntil(self, delims, drop=False, timeout = default):
         """recvuntil(delims, timeout = default) -> str
 
@@ -676,7 +873,8 @@ class tube(Timeout, Logger):
 
         return self.buffer.get()
 
-    def send(self, data):
+    @mark_different
+    def send(self, data, expect = None, mark=''):
         """send(data)
 
         Sends data.
@@ -698,13 +896,7 @@ class tube(Timeout, Logger):
 
         if self.isEnabledFor(logging.DEBUG):
             self.debug('Sent %#x bytes:' % len(data))
-            if len(set(data)) == 1:
-                self.indented('%r * %#x' % (data[0], len(data)))
-            elif all(c in string.printable for c in data):
-                for line in data.splitlines(True):
-                    self.indented(repr(line), level = logging.DEBUG)
-            else:
-                self.indented(fiddling.hexdump(data), level = logging.DEBUG)
+            self.debug_log_data(data)
         self.send_raw(data)
 
     def sendline(self, line=''):

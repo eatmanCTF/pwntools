@@ -129,7 +129,6 @@ class Pcap:
 
         for i, pkt in enumerate(pkts):
 
-            
             if not pkt.haslayer(Raw) :
                 continue
             
@@ -159,6 +158,18 @@ class Pcap:
                 }
             })
         return res
+    
+    def stream_to_vector(self,stream_id):
+        stream_json = self.stream_to_json(stream_id)
+        res = []
+        for pkt_info in stream_json:
+            name,info = pkt_info.items()[0]
+            if "peer0" in name:
+                res.append(len(info['ascii']))
+            else:
+                res.append( -len(info['ascii']))
+        return {stream_id[1]:res}
+
     
     def payload_to_ascii(self, payload):
         if payload != None:
@@ -214,6 +225,7 @@ def split(filename, config, vlan=True):
             Pcap.tcpdump(pcap_gamebox,pcap_gamebox_team,bpf,vlan)
 
 
+
 parser = common.parser_commands.add_parser(
     'pcap',
     help="pcap"
@@ -244,6 +256,13 @@ parser.add_argument(
     action='store_true',
     default=False,
     help='set if pcap with vlan',
+)
+
+parser.add_argument(
+    '--analyse',
+    action='store_true',
+    default=False,
+    help='stream to vector for analyse',
 )
 
 parser.add_argument(
@@ -288,6 +307,10 @@ def main(args):
 
     if args.summary:
         print(json.dumps(pcap.summary(config["teams"], config["gameboxs"] ), indent=4))
+    
+    if args.analyse:
+        for stream_id in pcap.streams:
+            print(pcap.stream_to_vector(stream_id))
 
     elif args.search or args.regex:
         if args.search:

@@ -135,7 +135,6 @@ class DataFile(object):
                 if rel1.raddr.val != rel2.raddr.val and rel1.saddr.val != rel2.saddr.val:
                     # add weight if offset's value matches
                     if Offset.equals(rel1, rel2) and rel1.raddr.val:
-                        # & 0xfff == rel2.raddr.val & 0xfff:
                         # appearance: worth 1000 weight
                         rel1.weight += 1000
                         rel2.weight += 1000

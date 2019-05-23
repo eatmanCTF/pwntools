@@ -74,6 +74,8 @@ class Duplication(Relation):
 
 class Offset(Relation):
     # {'recv': raddr, 'send': saddr, 'val': val, 'hex': hex(val), 'weight': 0}
+    _address_level = 0
+
     def __init__(self, raddr, saddr):
         assert(isinstance(raddr, Address))
         assert(isinstance(saddr, Address))
@@ -109,7 +111,17 @@ class Offset(Relation):
 
     @staticmethod
     def equals(of1, of2):
-        # TODO: of1.val == 0 
-        # more check
-        return of1.val == of2.val
+        res = of1.val == of2.val
+        if Offset._address_level & 0x1:
+            res = res and of1.val != 0
+        if Offset._address_level & 0x2:
+            res = res and of1.raddr.val & 0xfff == of2.raddr.val & 0xfff
+        if Offset._address_level & 0x4:
+            res = res and of1.raddr.val & 0xfffffff000 != of2.raddr.val & 0xfffffff000
+        if Offset._address_level & 0x8:
+            res = res and (of1.raddr.val >> 40) == (of2.raddr.val >> 40)
+        return res
 
+    @staticmethod
+    def set_address_level(level):
+        Offset._address_level = level

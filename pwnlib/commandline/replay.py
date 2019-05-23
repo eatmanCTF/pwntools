@@ -88,6 +88,21 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    '-l',
+    '--level',
+    nargs='?',
+    type=int,
+    default=7,
+    help=
+'''Address Level:********* R_F8|R_M28|R_L12|R_0 *********
+R_F8: First 8 bits of received addresses must same
+R_M28: Middle 28 bits of received addresses must be different
+R_L12: Last 12 bits of received addresses must same 
+R_0: offset value must not equals to 0
+'''
+)
+
+parser.add_argument(
     '--no-auto',
     action='store_true',
     default=False,
@@ -218,19 +233,12 @@ class ReplayScript(object):
         'from pwnlib.replay import Address',
         '',
         'def attack(ip=None, port=None, local_test=False):',
+        '    pwn = Pwn("{}", debug_version="2.27", local_libs=["{}", "{}"], host="{}", port={})',
         '    if local_test:',
         '        context.terminal = ["tmux", "splitw", "-h"]',
-        '        if args.REMOTE:',
-        '            io = remote("{}", {})',
-        '        else:',
-        '            elf = ELF("{}")',
-        '            {}elf = change_ld(elf, "{}")',
-        '            {}elf = change_lib(elf, "libc.so.6", "{}")',
-        '            io = elf.process()',
-        '            if args.GDB:',
-        '                gdb.attach(io, "c")',
         '    else:',
-        '        io = remote(ip, port)',
+        '        args.REMOTE=True',
+        '    io = pwn.start()',
     ]
     content_tail = [
         'if __name__ == "__main__":',
@@ -560,9 +568,9 @@ class ReplayScript(object):
             log.debug(addr)
 
         sys.stdout.write('\n'.join(self.content_head).format(
-            self.host, self.port, self.elf.file.name,
-            '' if self.ld else '#', self.ld,
-            '' if self.libc else '#', self.libc,
+            self.elf.file.name, 
+            self.ld, self.libc,
+            self.host, self.port,
         ) + '\n')
 
         self._output_comment(
@@ -649,6 +657,8 @@ def main(args):
         return
     else:
         try:
+            addr_level = args.level
+            Offset.set_address_level(addr_level)
             rs = ReplayScript(args)
             if rs.p2p:
                 rs.do_p2p_analysis()

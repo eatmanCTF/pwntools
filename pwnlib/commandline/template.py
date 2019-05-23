@@ -20,7 +20,7 @@ parser.add_argument('--port', help='Remote port / SSH port', default=9999, type=
 parser.add_argument('--user', help='SSH Username')
 parser.add_argument('--pass', help='SSH Password', dest='password')
 parser.add_argument('--path', help='Remote path of file on SSH server')
-parser.add_argument('--quiet', help='Less verbose template comments', action='store_true', default=True)
+parser.add_argument('--quiet', help='Less verbose template comments', action='store_true', default=False)
 
 def main(args):
     cache = None

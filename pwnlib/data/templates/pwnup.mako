@@ -1,4 +1,4 @@
-<%page args="binary, host=None, port=None, user=None, password=None, remote_path=None, quiet=True"/>\
+<%page args="binary, host=None, port=None, user=None, password=None, remote_path=None, quiet=False"/>\
 <%
 import os
 import sys
@@ -40,20 +40,6 @@ binary_repr = repr(binary)
 %endif
 from pwn import *
 from roputils import ROP
-%if not quiet:
-# Set up pwntools for the correct architecture
-%endif
-context.update(terminal=['tmux', 'splitw', '-h'])
-%if ctx.binary:
-elf = context.binary = ELF(${binary_repr})
-libc = elf.libc
-rop = ROP(elf.path)
-<% binary_repr = 'elf.path' %>
-%else:
-context.update(arch='i386')
-elf = ${binary_repr}
-<% binary_repr = 'elf' %>
-%endif
 
 %if not quiet:
 # Many built-in settings can be controlled on the command-line and show up
@@ -86,52 +72,6 @@ if not args.LOCAL:
     shell.set_working_directory(symlink=True)
 %endif
 
-%if host:
-def local(argv=[], *a, **kw):
-    '''Execute the target binary locally'''
-    if args.GDB:
-        return gdb.debug([${binary_repr}] + argv, gdbscript=gdbscript, *a, **kw)
-    else:
-        io = process([${binary_repr}] + argv, *a, **kw)
-        if args.ATTACH:
-            gdb.attach(io, gdbscript=gdbscript, *a, **kw)
-        return io
-
-def remote(argv=[], *a, **kw):
-  %if ssh:
-    '''Execute the target binary on the remote host'''
-    if args.GDB:
-        return gdb.debug([remote_path] + argv, gdbscript=gdbscript, ssh=shell, *a, **kw)
-    else:
-        return shell.process([remote_path] + argv, *a, **kw)
-  %else:
-    '''Connect to the process on the remote host'''
-    io = connect(host, port)
-    if args.GDB:
-        gdb.attach(io, gdbscript=gdbscript)
-    return io
-  %endif
-%endif
-
-%if host:
-def start(argv=[], *a, **kw):
-    '''Start the exploit against the target.'''
-    if not args.REMOTE:
-        return local(argv, *a, **kw)
-    else:
-        return remote(argv, *a, **kw)
-%else:
-def start(argv=[], *a, **kw):
-    '''Start the exploit against the target.'''
-    if args.GDB:
-        return gdb.debug([${binary_repr}] + argv, gdbscript=gdbscript, *a, **kw)
-    else:
-        io = process([${binary_repr}] + argv, *a, **kw)
-        if args.ATTACH:
-            gdb.attach(io, gdbscript=gdbscript, *a, **kw)
-        return io
-	
-%endif
 %if elf or remote_path:
 %if not quiet:
 # Specify your GDB script here for debugging
@@ -150,6 +90,21 @@ continue
 '''.format(**locals())
 %endif
 
+%if not quiet:
+# Set up pwntools for the correct architecture
+%endif
+context.update(terminal=['tmux', 'splitw', '-h'])
+%if ctx.binary:
+pwn = Pwn(${binary_repr}, debug_version='2.27', local_libs=[], host=host, port=port, gdbscript=gdbscript)
+elf = context.binary = pwn.elf
+libc = pwn.libc
+rop = ROP(elf.path)
+<% binary_repr = 'elf.path' %>
+%else:
+context.update(arch='i386')
+elf = ${binary_repr}
+<% binary_repr = 'elf' %>
+%endif
 
 %if not quiet:
 #===========================================================
@@ -168,7 +123,7 @@ continue
 %endfor
 %endif
 
-io = start()
+io = pwn.start()
 
 %if not quiet:
 # shellcode = asm(shellcraft.sh())

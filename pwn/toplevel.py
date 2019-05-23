@@ -18,7 +18,7 @@ import time
 from pprint import pprint
 
 import pwnlib
-from eatman import change_ld, change_lib, change_libc, mod_attack
+from eatman import Pwn, change_ld, change_lib, change_libc, mod_attack
 from pwnlib import *
 from pwnlib.asm import *
 from pwnlib.context import Thread

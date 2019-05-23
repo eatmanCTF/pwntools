@@ -1,13 +1,129 @@
 from __future__ import absolute_import
 
 import os
+from pwnlib import gdb
+from pwnlib.args import args
 from pwnlib.elf import ELF
 from pwnlib.log import getLogger
-from shutil import copyfile
+from pwnlib.tubes.process import process
+from pwnlib.tubes.remote import connect
+import shutil
 import sys
 log = getLogger(__name__)
 LD_TMPNAME = "/tmp/lso"
 ELF_TMPPATH = "/tmp/pwn"
+
+def set_interpreter(ld_path, binary):
+	if not os.path.exists(ELF_TMPPATH):
+		os.mkdir(ELF_TMPPATH)
+	pwn_elf_name = ELF_TMPPATH + '/' + binary.file.name
+	shutil.copyfile(binary.path, pwn_elf_name)
+	os.chmod(pwn_elf_name, 0o770)
+	cmd = 'patchelf --set-interpreter ' + ld_path + ' ' + pwn_elf_name
+	os.system(cmd)
+	return pwn_elf_name
+
+class Pwn:
+
+	def __init__(self, elf_name, gdbscript, debug_version='2.27', local_libs=[], env=[], host='127.0.0.1', port=9999):
+		if not isinstance(elf_name, ELF):
+			self.elf = ELF(elf_name)
+		else:
+			self.elf = elf_name
+		
+		library_needed = set()
+		r = os.popen("patchelf --print-needed " + self.elf.path).readlines()
+		# if args.GDB:
+		# 	r += os.popen("patchelf --print-needed " + "/usr/bin/gdbserver").readlines()
+		for l in r:
+			if not 'ld-' in l:
+				library_needed.add(l)
+		self._env = {
+			'debug': ['/glibc/{}/{}/lib/{}'.format(self.elf.arch, debug_version, lib.strip()) for lib in library_needed],
+			'local': local_libs,
+			'common': env
+		}
+		self._debug_version = debug_version
+		self._host = host
+		self._port = port
+		self.gdbscript = gdbscript
+		
+	@property
+	def libc(self):
+		if not args.LOCAL:
+			return ELF('/glibc/{}/{}/lib/libc.so.6'.format(self.elf.arch, self._debug_version))
+		else:
+			local_env = self._env['local']
+			for lib in local_env:
+				if lib in ['libc.so', 'libc.so.6'] or 'libc-' in lib:
+					return ELF(lib)
+			return self.elf.libc
+
+	def start(self, argv=[], *a, **kw):
+		if args.REMOTE:
+			return self.remote(argv, *a, **kw)
+		elif args.LOCAL:
+			return self.local(argv, *a, **kw)
+		else:
+			return self.debug(argv, *a, **kw)
+
+	def debug(self, argv, *a, **kw):
+		self.elf = self.change_ld(self.elf, self._debug_version)
+		debug_env = self._env['debug']
+		env = kw.pop('env', {})
+		env['LD_PRELOAD'] = ':'.join(debug_env)
+		print env
+		if args.GDB:
+			return gdb.debug([self.elf.path] + argv, exe=self.elf.path, env=env, gdbscript=self.gdbscript, *a, **kw)
+		else:
+			io = process([self.elf.path] + argv, env=env, *a, **kw)
+			if args.ATTACH:
+				gdb.attach(io, gdbscript=self.gdbscript)
+			return io
+
+	def local(self, argv, *a, **kw):
+		local_env = self._env['local']
+		env = kw.pop('env', {})
+		for (i, lib) in enumerate(local_env):
+			if "ld-" in lib:
+				ld_path = local_env.pop(i)
+				self.elf = self.change_ld(self.elf, ld_path)
+		if local_env:
+			env['LD_PRELOAD'] = ':'.join(local_env)
+		if args.GDB:
+			return gdb.debug([self.elf.path] + argv, env=env, *a, **kw)
+		else:
+			io = process([self.elf.path] + argv, env=env, *a, **kw)
+			if args.ATTACH:
+				gdb.attach(io, gdbscript=self.gdbscript)
+			return io
+
+	def remote(self, argv, *a, **kw):
+		io = connect(self._host, self._port, *a, **kw)
+		if args.GDB:
+			gdb.attach(io, gdbscript=self.gdbscript)
+		return io
+
+	@staticmethod
+	def change_ld(binary, ld):
+		if not isinstance(binary, ELF):
+			if not os.path.isfile(binary): 
+				log.failure("Invalid path {}: File does not exists".format(binary))
+				return None
+			else:
+				binary = ELF(binary)
+
+		arch = binary.arch
+
+		if not os.path.isfile(ld):
+			if not ld in ['2.23', '2.24', '2.25', '2.26', '2.27', '2.28', '2.29']:
+				log.failure("Invalid path {}: File does not exists".format(ld))
+				return None
+			else:
+				ld =  '/glibc/{}/{}/lib/ld-{}.so'.format(arch, ld, ld)
+		ld_abs_path = os.path.abspath(ld)
+		pwn_elf_path = set_interpreter(ld_abs_path, binary)
+		return ELF(pwn_elf_path)
 
 def create_symlink(src, dst):
 	if os.path.islink(dst):
@@ -140,7 +256,7 @@ def mod_attack(n, e1, c1, e2, c2):
         unknown: m
         conditions:
             m ** e1 % n = c1
-            m ** e2 % n - c2
+            m ** e2 % n = c2
     """
     if isinstance(n, str):
         n = int(n, 16)

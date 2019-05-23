@@ -134,7 +134,8 @@ class DataFile(object):
                 # it cannot be a address if df1's addr equals to df2's addr
                 if rel1.raddr.val != rel2.raddr.val and rel1.saddr.val != rel2.saddr.val:
                     # add weight if offset's value matches
-                    if Offset.equals(rel1, rel2) and rel1.raddr.val & 0xfff == rel2.raddr.val & 0xfff:
+                    if Offset.equals(rel1, rel2) and rel1.raddr.val:
+                        # & 0xfff == rel2.raddr.val & 0xfff:
                         # appearance: worth 1000 weight
                         rel1.weight += 1000
                         rel2.weight += 1000
@@ -243,9 +244,9 @@ class DataFile(object):
                 for i in range(diff.position, diff.position+diff.length):
                     diff.peer.mark_related(i)
         self.refresh_relations()
-        # for peer in self.peer_sequence:
-        #     for diff in peer.difference_list:
-        #         log.info(diff)
+        for peer in self.peer_sequence:
+            for diff in peer.difference_list:
+                log.info(diff)
         self.relation_list = offset_list + self.duplication_list
 
     def hexdump_peer(self, peer_name):

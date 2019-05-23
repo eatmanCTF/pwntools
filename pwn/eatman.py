@@ -25,7 +25,7 @@ def set_interpreter(ld_path, binary):
 
 class Pwn:
 
-	def __init__(self, elf_name, gdbscript, debug_version='2.27', local_libs=[], env=[], host='127.0.0.1', port=9999):
+	def __init__(self, elf_name, gdbscript='', debug_version='2.27', local_libs=[], env=[], host='127.0.0.1', port=9999):
 		if not isinstance(elf_name, ELF):
 			self.elf = ELF(elf_name)
 		else:
@@ -72,7 +72,6 @@ class Pwn:
 		debug_env = self._env['debug']
 		env = kw.pop('env', {})
 		env['LD_PRELOAD'] = ':'.join(debug_env)
-		print env
 		if args.GDB:
 			return gdb.debug([self.elf.path] + argv, exe=self.elf.path, env=env, gdbscript=self.gdbscript, *a, **kw)
 		else:
@@ -85,7 +84,7 @@ class Pwn:
 		local_env = self._env['local']
 		env = kw.pop('env', {})
 		for (i, lib) in enumerate(local_env):
-			if "ld-" in lib:
+			if "ld-" in lib or "ld_" in lib:
 				ld_path = local_env.pop(i)
 				self.elf = self.change_ld(self.elf, ld_path)
 		if local_env:

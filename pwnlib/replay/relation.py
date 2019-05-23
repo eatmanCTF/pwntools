@@ -109,5 +109,7 @@ class Offset(Relation):
 
     @staticmethod
     def equals(of1, of2):
-        return of1.val == of2.val and of1.val != 0
+        # TODO: of1.val == 0 
+        # more check
+        return of1.val == of2.val
 

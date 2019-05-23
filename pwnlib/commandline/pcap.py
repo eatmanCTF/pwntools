@@ -19,6 +19,7 @@ import string
 import sys
 import pwnlib
 from pwnlib.term import text
+from hexdump import hexdump
 pwnlib.args.free_form = False
 
 from pwn import *
@@ -28,13 +29,48 @@ from pwnlib.commandline import common
 class Pcap:
     def __init__(self, filename):
         self.filename = filename
-        self.pkts = sniff(offline=filename)
-        self.streams = self.streams()
+        self.load(filename)
+
+    def load(self, filename):
+        # 注意，这里没有使用 sniff(offline=filename,filter='tcp')，是因为这个函数有时候会导致程序卡死
+        self.pkts = self.get_tcp_pkts(rdpcap(filename))
+        self.streams, self.others = self.streams()
+
+    def get_tcp_pkts(self, pkts):
+        return [p for p in pkts if p.haslayer(TCP)]
 
     def streams(self):
-        """stream对应的是往返ip和端口的所有数据包,返回数组：[('192.168.127.132', 59406, '123.115.4.184', 9999)]"""
-        return [self.get_ip_and_port(p) for p in self.pkts if p.getlayer(TCP).flags.flagrepr() == 'S']
+        """stream对应的是往返ip和端口的所有数据包,返回字典"""
+        streams = {}
+        others = []
+        for p in self.pkts:
+            session_id, session_id_rev = self.get_session_id(p)
+            if p.getlayer(TCP).flags.flagrepr() == 'S':
+                streams.update({session_id: [p]})
+            elif session_id in streams:
+                streams[session_id].append(p)
+            elif session_id_rev in streams:
+                streams[session_id_rev].append(p)
+            else:
+                others.append(p)
+        return streams, others
 
+    def summary(self,clients={},servers={}):
+        summary = {}
+        for stream_id in self.streams.keys():
+            
+            client,server = Pcap.stream_id_to_names(stream_id,clients,servers)
+
+            if server not in summary:
+                summary.update({server: {}})
+
+            if client not in summary[server]:
+                summary[server].update({client: 1})
+            else:
+                summary[server][client] += 1
+            # print(client, service)
+        return summary
+    
     def search(self, data):
         """返回在tcp层数据存在data的pkt列表，其中data是bytes格式"""
         return [p for p in self.pkts if data in raw(p.getlayer(TCP).payload)]
@@ -47,9 +83,19 @@ class Pcap:
         tcp = pkt.getlayer(TCP)
         return ip.src, tcp.sport, ip.dst, tcp.dport
 
-    def filter_by_BPF(self, bpf, pkts=None):
+    def get_session_id(self, pkt):
+        """获取pkt的tcp表示"""
+        ip = pkt.getlayer(IP)
+        tcp = pkt.getlayer(TCP)
+        session_id = (ip.src, tcp.sport, ip.dst, tcp.dport)
+        session_id_rev = (ip.dst, tcp.dport, ip.src, tcp.sport)
+        return session_id, session_id_rev
+
+    def filter_by_BPF(self, bpf, pkts=None, vlan=True):
         """使用伯克利包过滤(Berkeley Packet Filter)规则,过滤数据包"""
         pkts = pkts or self.pkts
+        if vlan:
+            bpf = "({0}) or (vlan and {0})".format(bpf)
         return sniff(offline=pkts, filter=bpf)
 
     def filter_by_ip(self, ip, pkts=None):
@@ -66,27 +112,15 @@ class Pcap:
 
     def follow_tcp_stream(self, pkt):
         """从任意pkt，返回其所在的tcp流的所有pkts"""
-        ip = pkt.getlayer(IP)
-        tcp = pkt.getlayer(TCP)
-        pkts = self.filter_by_ip_and_port(ip.src, tcp.sport)
-        return self.filter_by_ip_and_port(ip.dst, tcp.dport, pkts)
+        session_id, sesion_id_rev = self.get_session_id(pkt)
+        if session_id in self.streams:
+            return session_id
+        elif sesion_id_rev in self.streams:
+            return sesion_id_rev
 
-    def payload_to_ascii(self, payload):
-        if payload != None:
-            return re.sub(b'[^\x1f-\x7f]', b'.', payload).decode()
-
-    def payload_to_carray(self, payload):
-        return ",".join("{:#04x}".format(b) for b in bytes(payload))
-
-    def dump_stream_pkts(self, filename, pkts):
-
-        if pkts[0].getlayer(TCP).flags.flagrepr() != 'S':
-            raise Exception("第一个数据包不是syn")
-
-        src, sport, dsc, dport = self.get_ip_and_port(pkts[0])
-
-        type_request = (src, sport, dsc, dport)
-        type_response = (dsc, dport, src, sport)
+    def stream_to_json(self, stream_id):
+ 
+        pkts = self.streams[stream_id]
 
         count_request = 0
         count_response = 0
@@ -94,14 +128,22 @@ class Pcap:
         res = []
 
         for i, pkt in enumerate(pkts):
-            payload = raw(pkt.getlayer(TCP).payload)
-            if payload == b'':
-                continue
 
-            if self.get_ip_and_port(pkt) == type_request:
+            if not pkt.haslayer(Raw) :
+                continue
+            
+            tcp_raw = pkt.getlayer(Raw)
+            if tcp_raw.haslayer(Padding):
+                tcp_raw.remove_payload()
+
+            tcp_data = raw(tcp_raw)
+            
+            session_id,session_id_rev = self.get_session_id(pkt)
+
+            if session_id == stream_id:
                 name = "peer{}_{}".format(0, count_request)
                 count_request += 1
-            elif self.get_ip_and_port(pkt) == type_response:
+            elif session_id_rev == stream_id:
                 name = "peer{}_{}".format(1, count_response)
                 count_response += 1
             else:
@@ -111,49 +153,77 @@ class Pcap:
                 name: {
                     "time": pkt.time,
                     "index": i + 1,
-                    "ascii": self.payload_to_ascii(payload),
-                    "carray": self.payload_to_carray(payload)
+                    "ascii": self.payload_to_ascii(tcp_data),
+                    "carray": self.payload_to_carray(tcp_data)
                 }
             })
+        return res
+    
+    def stream_to_vector(self,stream_id):
+        stream_json = self.stream_to_json(stream_id)
+        res = []
+        for pkt_info in stream_json:
+            name,info = pkt_info.items()[0]
+            if "peer0" in name:
+                res.append(len(info['ascii']))
+            else:
+                res.append( -len(info['ascii']))
+        return {stream_id[1]:res}
 
-        with open(filename, 'w') as outfile:
-            json.dump(res, outfile, indent=4)
+    
+    def payload_to_ascii(self, payload):
+        if payload != None:
+            return re.sub(b'[^\x1f-\x7f]', b'.', payload).decode()
+
+    def payload_to_carray(self, payload):
+        return ",".join("{:#04x}".format(b) for b in bytes(payload))
 
     def dump_pkts_as_pcap(self, filename, pkts):
         wrpcap(filename, pkts)
+    
+    @staticmethod
+    def tcpdump(input_file,output_file,bpf,vlan=True):
+        if vlan:
+            bpf = "vlan and " + bpf
+        cmd = 'tcpdump -r {} "{}" -w {}'.format(input_file, bpf, output_file)
+        os.system(cmd)
 
+    @staticmethod
+    def stream_id_to_names(stream_id,clients = {},servers = {}):
+        src, sport, dst, dport = list(stream_id)
 
-class Config:
-    def __init__(self, path="config.json"):
-        if not os.path.exists(path):
-            config = {
-                "teams": {
-                    "team1": "127.0.0.1/32"
-                },
-                "gameboxs": {
-                    "suffarring": "127.0.0.1:4444"
-                }
-            }
-            with open("config.json", 'w') as outfile:
-                json.dump(config, outfile, indent=4)
+        client_name = src
+        for name, net_block in clients.items():
+            ip = ipaddress.ip_address(unicode(src))
+            if ip in ipaddress.ip_network(unicode(net_block)):
+                client_name = name
 
-        config = json.load(open(path))
-        self.gameboxs = config["gameboxs"]
-        self.teams = config["teams"]
+        server_name = "{}:{}".format(dst, dport)
+        for name,conn in servers.items():
+            if server_name == conn:
+                server_name = name
 
-    def get_gamebox_name(self, ip, port):
-        conn = "{}:{}".format(ip, port)
-        for name, value in self.gameboxs.items():
-            if value == conn:
-                return name
-        return conn
+        return client_name ,server_name
 
-    def get_team_name(self, ip):
-        ip = ipaddress.ip_address(unicode(ip))
-        for team, net in self.teams.items():
-            if ip in ipaddress.ip_network(unicode(net)):
-                return team
-        return ip
+def split(filename, config, vlan=True):
+    """"""
+    filename = os.path.basename(filename)
+    folder,_ = os.path.splitext(filename)
+
+    os.system("mkdir -p {}".format(folder))
+
+    for gamebox_name, conn in config["gameboxs"].items():
+        ip, port = conn.split(":")
+        bpf = "(src host {0} and src port {1}) or (dst host {0} and dst port {1})".format(ip, port)
+        pcap_gamebox = "{}/{}.pcap".format(folder, gamebox_name)
+        Pcap.tcpdump(filename,pcap_gamebox,bpf,vlan)
+
+        os.system("mkdir -p {}/{}".format(folder,gamebox_name))
+        for team_name,net in config["teams"].items():
+            bpf = "net {}".format(net)
+            pcap_gamebox_team = "{}/{}/{}.pcap".format(folder,gamebox_name,team_name)
+            Pcap.tcpdump(pcap_gamebox,pcap_gamebox_team,bpf,vlan)
+
 
 
 parser = common.parser_commands.add_parser(
@@ -163,17 +233,37 @@ parser = common.parser_commands.add_parser(
 
 parser.add_argument(
     'pcap_file',
-    type=argparse.FileType('r'),
+    nargs='?',
     help='input pcap file'
 )
 
 parser.add_argument(
-    '--list',
+    '--summary',
     action='store_true',
     default=False,
-    help='list streams info of a pcap file',
+    help='get streams info of a pcap file',
 )
 
+parser.add_argument(
+    '--split',
+    action='store_true',
+    default=False,
+    help='split big pcap file into small pcap files',
+)
+
+parser.add_argument(
+    '--vlan',
+    action='store_true',
+    default=False,
+    help='set if pcap with vlan',
+)
+
+parser.add_argument(
+    '--analyse',
+    action='store_true',
+    default=False,
+    help='stream to vector for analyse',
+)
 
 parser.add_argument(
     '-s',
@@ -189,24 +279,38 @@ parser.add_argument(
     help='search strings in packets by regex',
 )
 
-parser.add_argument(
-    '--bpf',
-    nargs='?',
-    help='use Berkeley Packet Filter filter packets',
-)
-
 
 def main(args):
+
+    conf_path = os.path.expanduser("~/.pwn.pcap.conf")
+
+    if not os.path.exists(conf_path):
+        config = {
+            "gameboxs": {
+                "gamebox1": "172.16.5.20:5051"
+            }, 
+            "teams": {
+                "team1": "172.16.5.12/32",
+                "team2": "172.16.5.22/32"
+            }
+        }
+
+        with open(conf_path, 'w') as outfile:
+            json.dump(config, outfile, indent=4)
+
+    config = json.load(open(conf_path))
+
+    if args.split:
+        return split(args.pcap_file, config)
+
     pcap = Pcap(args.pcap_file)
-    config = Config()
 
-    if args.list:
-        for stream in pcap.streams:
-            log.info(stream)
-
-    elif args.bpf:
-        pkts = pcap.filter_by_BPF(args.bpf)
-        pcap.dump_pkts_as_pcap("bpf.out.pcap", pkts)
+    if args.summary:
+        print(json.dumps(pcap.summary(config["teams"], config["gameboxs"] ), indent=4))
+    
+    if args.analyse:
+        for stream_id in pcap.streams:
+            print(pcap.stream_to_vector(stream_id))
 
     elif args.search or args.regex:
         if args.search:
@@ -216,18 +320,17 @@ def main(args):
 
         log.info("搜索到符合条件的数据包:{}".format(len(pkts)))
 
+        if len(pkts) != 0:
+            os.system("mkdir -p output")
+
         for p in pkts:
-            stream = pcap.follow_tcp_stream(p)
-            src, sport, dst, dport = pcap.get_ip_and_port(stream[0])
-            home_dir = config.get_gamebox_name(dst, dport)
-            sub_dir = "{}/{}".format(home_dir, config.get_team_name(src))
-            out_path = "{}/{}.json".format(sub_dir, stream[0].time)
+            stream_id = pcap.follow_tcp_stream(p)
+            team,gamebox = Pcap.stream_id_to_names(stream_id,config["teams"], config["gameboxs"])
+            
+            out_path = "output/{}_{}_{}.json".format(gamebox, team, pcap.streams[stream_id][0].time)
             log.info("保存数据到文件:{}".format(out_path))
-            if not os.path.exists(home_dir):
-                os.makedirs(home_dir)
-            if not os.path.exists(sub_dir):
-                os.makedirs(sub_dir)
-            pcap.dump_stream_pkts(out_path, stream)
+            with open(out_path, 'w') as outfile:
+                json.dump(pcap.stream_to_json(stream_id) , outfile, indent=4)
 
 
 if __name__ == '__main__':

@@ -445,7 +445,10 @@ def debug(args, gdbscript=None, exe=None, ssh=None, env=None, sysroot=None, **kw
 
     # Start gdbserver/qemu
     # (Note: We override ASLR here for the gdbserver process itself.)
-    gdbserver = runner(args, env=env, aslr=1, **kwargs)
+    # fix: gdbserver does not need any env
+    wrapper = '--wrapper env ' + ' '.join(['{}={}'.format(key, env[key]) for key in env]) + ' --'
+    args.append(wrapper)
+    gdbserver = runner(args, aslr=1, **kwargs)
 
     # Set the .executable on the process object.
     gdbserver.executable = which(orig_args[0])

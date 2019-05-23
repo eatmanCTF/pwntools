@@ -96,8 +96,8 @@ continue
 context.update(terminal=['tmux', 'splitw', '-h'])
 %if ctx.binary:
 pwn = Pwn(${binary_repr}, 
-    debug_version='2.27', 
-    local_libs=[], 
+    src='2.27', 
+    libs=[], 
     host=host, port=port, gdbscript=gdbscript)
 elf = context.binary = pwn.elf
 libc = pwn.libc

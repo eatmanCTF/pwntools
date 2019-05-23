@@ -25,7 +25,7 @@ def set_interpreter(ld_path, binary):
 
 class Pwn:
 
-	def __init__(self, elf_name, gdbscript='', debug_version='2.27', local_libs=[], env=[], host='127.0.0.1', port=9999):
+	def __init__(self, elf_name, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
 		if not isinstance(elf_name, ELF):
 			self.elf = ELF(elf_name)
 		else:
@@ -39,18 +39,18 @@ class Pwn:
 			if not 'ld-' in l:
 				library_needed.add(l)
 		self._env = {
-			'debug': ['/glibc/{}/{}/lib/{}'.format(self.elf.arch, debug_version, lib.strip()) for lib in library_needed],
-			'local': local_libs,
+			'debug': ['/glibc/{}/{}/lib/{}'.format(self.elf.arch, src, lib.strip()) for lib in library_needed],
+			'local': libs,
 			'common': env
 		}
-		self._debug_version = debug_version
+		self._debug_version = src
 		self._host = host
 		self._port = port
 		self.gdbscript = gdbscript
 		
 	@property
 	def libc(self):
-		if not args.LOCAL:
+		if args.SRC:
 			return ELF('/glibc/{}/{}/lib/libc.so.6'.format(self.elf.arch, self._debug_version))
 		else:
 			local_env = self._env['local']
@@ -62,10 +62,10 @@ class Pwn:
 	def start(self, argv=[], *a, **kw):
 		if args.REMOTE:
 			return self.remote(argv, *a, **kw)
-		elif args.LOCAL:
-			return self.local(argv, *a, **kw)
-		else:
+		elif args.SRC:
 			return self.debug(argv, *a, **kw)
+		else:
+			return self.local(argv, *a, **kw)
 
 	def debug(self, argv, *a, **kw):
 		self.elf = self.change_ld(self.elf, self._debug_version)
@@ -84,7 +84,7 @@ class Pwn:
 		local_env = self._env['local']
 		env = kw.pop('env', {})
 		for (i, lib) in enumerate(local_env):
-			if "ld-" in lib or "ld_" in lib:
+			if "ld" in lib:
 				ld_path = local_env.pop(i)
 				self.elf = self.change_ld(self.elf, ld_path)
 		if local_env:

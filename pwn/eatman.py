@@ -13,20 +13,9 @@ log = getLogger(__name__)
 LD_TMPNAME = "/tmp/lso"
 ELF_TMPPATH = "/tmp/pwn"
 
-def set_interpreter(ld_path, binary):
-	if not os.path.exists(ELF_TMPPATH):
-		os.mkdir(ELF_TMPPATH)
-	pwn_elf_name = ELF_TMPPATH + '/' + os.path.split(binary.path)[1]
-	shutil.copyfile(binary.path, pwn_elf_name)
-	os.chmod(pwn_elf_name, 0o770)
-	cmd = 'patchelf --set-interpreter ' + ld_path + ' ' + pwn_elf_name
-	os.system(cmd)
-	return pwn_elf_name
-
 class Pwn:
 
 	def __init__(self, elf, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
-		
 		self._debug_version = src
 		self._host = host
 		self._port = port
@@ -54,7 +43,7 @@ class Pwn:
 
 		self._env = {
 			'debug': ['/glibc/{}/{}/lib/{}'.format(self.elf.arch, src, lib.strip()) for lib in library_needed],
-			'local': libs,
+			'local': [os.path.abspath(lib) for lib in libs],
 			'common': env
 		}
 		
@@ -101,6 +90,17 @@ class Pwn:
 		return r.strip()
 
 	@staticmethod
+	def set_interpreter(ld_path, binary):
+		if not os.path.exists(ELF_TMPPATH):
+			os.mkdir(ELF_TMPPATH)
+		pwn_elf_name = ELF_TMPPATH + '/' + os.path.split(binary.path)[1]
+		shutil.copyfile(binary.path, pwn_elf_name)
+		os.chmod(pwn_elf_name, 0o770)
+		cmd = 'patchelf --set-interpreter ' + ld_path + ' ' + pwn_elf_name
+		os.system(cmd)
+		return pwn_elf_name
+
+	@staticmethod
 	def change_ld(binary, ld):
 		if not isinstance(binary, ELF):
 			if not os.path.isfile(binary): 
@@ -118,7 +118,7 @@ class Pwn:
 			else:
 				ld =  '/glibc/{}/{}/lib/ld-{}.so'.format(arch, ld, ld)
 		ld_abs_path = os.path.abspath(ld)
-		pwn_elf_path = set_interpreter(ld_abs_path, binary)
+		pwn_elf_path = Pwn.set_interpreter(ld_abs_path, binary)
 		return ELF(pwn_elf_path)
 
 def create_symlink(src, dst):

@@ -26,28 +26,37 @@ def set_interpreter(ld_path, binary):
 class Pwn:
 
 	def __init__(self, elf, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
-		if not isinstance(elf, ELF):
-			self.elf = ELF(elf)
+		
+		self._debug_version = src
+		self._host = host
+		self._port = port
+		self.gdbscript = gdbscript
+		
+		if args.SRC:
+			self.elf = self.change_ld(elf, self._debug_version)
 		else:
-			self.elf = elf
-
-		self._elf_path = self.elf.path
-		self._elf_filename = os.path.split(self._elf_path)[1]
+			for (i, lib) in enumerate(libs):
+				if Pwn.get_so_name(lib) == 'ld-linux-x86-64.so.2' or Pwn.get_so_name(lib) == 'ld-linux.so.2':
+					ld_path = libs.pop(i)
+					self.elf = self.change_ld(elf, ld_path)
+					break
+			else:
+				if not isinstance(elf, ELF):
+					self.elf = ELF(elf)
+				else:
+					self.elf = elf
 		
 		library_needed = set()
 		r = os.popen("patchelf --print-needed " + self.elf.path).readlines()
 		for l in r:
 			if not 'ld-' in l:
 				library_needed.add(l)
+
 		self._env = {
 			'debug': ['/glibc/{}/{}/lib/{}'.format(self.elf.arch, src, lib.strip()) for lib in library_needed],
 			'local': libs,
 			'common': env
 		}
-		self._debug_version = src
-		self._host = host
-		self._port = port
-		self.gdbscript = gdbscript
 		
 	@property
 	def libc(self):
@@ -56,40 +65,21 @@ class Pwn:
 		else:
 			local_env = self._env['local']
 			for lib in local_env:
-				if 'libc' in lib:
+				if Pwn.get_so_name(lib) == 'libc.so.6':
 					return ELF(lib)
 			return self.elf.libc
 
 	def start(self, argv=[], *a, **kw):
 		if args.REMOTE:
 			return self.remote(argv, *a, **kw)
-		elif args.SRC:
-			return self.debug(argv, *a, **kw)
 		else:
 			return self.local(argv, *a, **kw)
 
-	def debug(self, argv, *a, **kw):
-		self.elf = self.change_ld(self.elf, self._debug_version)
-		debug_env = self._env['debug']
-		env = kw.pop('env', {})
-		env['LD_PRELOAD'] = ':'.join(debug_env)
-		if args.GDB:
-			return gdb.debug([self.elf.path] + argv, exe=self.elf.path, env=env, gdbscript=self.gdbscript, *a, **kw)
-		else:
-			io = process([self.elf.path] + argv, env=env, *a, **kw)
-			if args.ATTACH:
-				gdb.attach(io, gdbscript=self.gdbscript)
-			return io
-
 	def local(self, argv, *a, **kw):
-		local_env = self._env['local']
-		env = kw.pop('env', {})
-		for (i, lib) in enumerate(local_env):
-			if 'ld' in lib:
-				ld_path = local_env.pop(i)
-				self.elf = self.change_ld(self.elf, ld_path)
-		if local_env:
-			env['LD_PRELOAD'] = ':'.join(local_env)
+		mode = 'debug' if args.SRC else 'local'
+		env = kw.pop('env', {}) 
+		if self._env[mode]:
+			env['LD_PRELOAD'] = ':'.join(self._env[mode])
 		if args.GDB:
 			return gdb.debug([self.elf.path] + argv, env=env, *a, **kw)
 		else:
@@ -103,6 +93,12 @@ class Pwn:
 		if args.GDB:
 			gdb.attach(io, gdbscript=self.gdbscript)
 		return io
+
+	@staticmethod
+	def get_so_name(ld_path):
+		ld_abspath = os.path.abspath(ld_path)
+		r = os.popen("patchelf --print-soname " + ld_abspath).read()
+		return r.strip()
 
 	@staticmethod
 	def change_ld(binary, ld):

@@ -16,7 +16,7 @@ ELF_TMPPATH = "/tmp/pwn"
 def set_interpreter(ld_path, binary):
 	if not os.path.exists(ELF_TMPPATH):
 		os.mkdir(ELF_TMPPATH)
-	pwn_elf_name = ELF_TMPPATH + '/' + binary.file.name
+	pwn_elf_name = ELF_TMPPATH + '/' + os.path.split(binary.path)[1]
 	shutil.copyfile(binary.path, pwn_elf_name)
 	os.chmod(pwn_elf_name, 0o770)
 	cmd = 'patchelf --set-interpreter ' + ld_path + ' ' + pwn_elf_name
@@ -25,16 +25,17 @@ def set_interpreter(ld_path, binary):
 
 class Pwn:
 
-	def __init__(self, elf_name, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
-		if not isinstance(elf_name, ELF):
-			self.elf = ELF(elf_name)
+	def __init__(self, elf, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
+		if not isinstance(elf, ELF):
+			self.elf = ELF(elf)
 		else:
-			self.elf = elf_name
+			self.elf = elf
+
+		self._elf_path = self.elf.path
+		self._elf_filename = os.path.split(self._elf_path)[1]
 		
 		library_needed = set()
 		r = os.popen("patchelf --print-needed " + self.elf.path).readlines()
-		# if args.GDB:
-		# 	r += os.popen("patchelf --print-needed " + "/usr/bin/gdbserver").readlines()
 		for l in r:
 			if not 'ld-' in l:
 				library_needed.add(l)
@@ -55,7 +56,7 @@ class Pwn:
 		else:
 			local_env = self._env['local']
 			for lib in local_env:
-				if lib in ['libc.so', 'libc.so.6'] or 'libc-' in lib:
+				if 'libc' in lib:
 					return ELF(lib)
 			return self.elf.libc
 
@@ -84,7 +85,7 @@ class Pwn:
 		local_env = self._env['local']
 		env = kw.pop('env', {})
 		for (i, lib) in enumerate(local_env):
-			if "ld" in lib:
+			if 'ld' in lib:
 				ld_path = local_env.pop(i)
 				self.elf = self.change_ld(self.elf, ld_path)
 		if local_env:

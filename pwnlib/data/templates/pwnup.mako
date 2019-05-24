@@ -79,14 +79,6 @@ if not args.LOCAL:
 # ./exploit.py GDB
 %endif
 gdbscript = '''
-%if ctx.binary:
-  %if 'main' in ctx.binary.symbols:
-tbreak main
-  %elif 'DYN' != ctx.binary.elftype:
-tbreak *0x{elf.entry:x}
-  %endif
-%endif
-continue
 '''.format(**locals())
 %endif
 

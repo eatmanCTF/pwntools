@@ -168,6 +168,14 @@ class Pcap:
                 res.append(len(info['ascii']))
             else:
                 res.append( -len(info['ascii']))
+        
+        for i in range(len(res) - 1):
+            if res[i] * res[i + 1] > 0:
+                res[i+1] += res[i]
+                res[i] = 0
+
+        res = [n for n in res if n != 0]
+
         return {stream_id[1]:res}
 
     

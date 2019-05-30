@@ -14,6 +14,7 @@ from pwnlib.util.packing import u32, u64, p32, p64
 import shutil
 import sys
 import math
+from ctypes import *
 
 LIBC_DATABASE_PATH = "/mnt/hgfs/share/git/libc-database"
 ELF_TMPPATH = "/tmp/pwn"
@@ -27,7 +28,7 @@ class Pwn(Logger):
 		self._host = host
 		self._port = port
 		self.gdbscript = gdbscript
-		
+		self._ffi = None
 		if args.SRC:
 			self.elf = self.change_ld(elf, self._debug_version)
 		else:
@@ -83,6 +84,12 @@ class Pwn(Logger):
 				if Pwn.get_so_name(lib) == 'libc.so.6':
 					return ELF(lib)
 			return self.elf.libc
+	
+	@property
+	def ffi(self):
+		if not self._ffi:
+			self._ffi = MYFFI(self.libc.path, self)
+		return self._ffi
 
 	def start(self, argv=[], *a, **kw):
 		if args.REMOTE:
@@ -270,15 +277,39 @@ class Tea:
 			res.append((y << 32) + x)
 		return ''.join([p64(i) for i in res])
 
-class Random():
+class MYFFI(CDLL):
 
 	randomelf = os.path.split(os.path.realpath(__file__))[0] + "/random.elf"
+	mktimeelf = os.path.split(os.path.realpath(__file__))[0] + "/mktime.elf"
 
-	@staticmethod
-	def get(seed, count=10000):
-		assert(type(seed) == int)
-		p = subprocess.Popen("{} {}".format(Random.randomelf, seed), 
+	def __init__(self, libc_path, pwn):
+		super(MYFFI, self).__init__(libc_path)
+		self._pwn = pwn
+
+	def mktime(self, timestruct):
+		assert(type(timestruct) == list and len(timestruct) >= 9)
+		p = subprocess.Popen("{} {}".format(MYFFI.mktimeelf, ' '.join([str(i) for i in timestruct])), 
 			shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 		(stdout, stderr) = p.communicate()
+		if stderr:
+			self._pwn.warn(stderr)
 		if stdout:
-			return stdout.split()[:count]
+			return stdout.split()[0]
+
+	# class tm(Structure):
+	# 	_fields_ = [
+	# 		('tm_sec', c_int),
+	# 		('tm_min', c_int),
+	# 		('tm_hour', c_int),
+	# 		('tm_mday', c_int),
+	# 		('tm_mon', c_int),
+	# 		('tm_year', c_int),
+	# 		('tm_wday', c_int),
+	# 		('tm_yday', c_int),
+	# 		('tm_isdst', c_int),
+	# 	]
+
+	# def __getattr__(self, name):
+	# 	if not hasattr(self, name):
+	# 		return self.lib.__getattr__(name)
+	# 	return super(CFFI, self).__getattr__(name)

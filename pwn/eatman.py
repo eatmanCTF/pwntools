@@ -1,21 +1,28 @@
 from __future__ import absolute_import
 
 import os
+import subprocess
+import re
 from pwnlib import gdb
+from pwnlib.log import Logger
 from pwnlib.args import args
 from pwnlib.elf import ELF
 from pwnlib.log import getLogger
 from pwnlib.tubes.process import process
 from pwnlib.tubes.remote import connect
+from pwnlib.util.packing import u32, u64, p32, p64
 import shutil
 import sys
-log = getLogger(__name__)
-LD_TMPNAME = "/tmp/lso"
+import math
+
+LIBC_DATABASE_PATH = "/mnt/hgfs/share/git/libc-database"
 ELF_TMPPATH = "/tmp/pwn"
 
-class Pwn:
+
+class Pwn(Logger):
 
 	def __init__(self, elf, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
+		super(Pwn, self).__init__()
 		self._debug_version = src
 		self._host = host
 		self._port = port
@@ -24,16 +31,35 @@ class Pwn:
 		if args.SRC:
 			self.elf = self.change_ld(elf, self._debug_version)
 		else:
+			libc = ""
 			for (i, lib) in enumerate(libs):
+				# if iterpreter is given, change and break
 				if Pwn.get_so_name(lib) == 'ld-linux-x86-64.so.2' or Pwn.get_so_name(lib) == 'ld-linux.so.2':
 					ld_path = libs.pop(i)
 					self.elf = self.change_ld(elf, ld_path)
 					break
+				if Pwn.get_so_name(lib) == 'libc.so.6':
+					libc = lib
 			else:
-				if not isinstance(elf, ELF):
-					self.elf = ELF(elf)
+				# iterpreter is not given
+				for i in range(1):
+					if libs and libc:
+						libc_id = Pwn.get_ld_by_libc(libc)
+						if libc_id:
+							ld_id = re.compile("libc6_").sub("ld_", libc_id)
+							ld_auto_lookup = LIBC_DATABASE_PATH + "/db/" + ld_id + ".so"
+							if os.path.isfile(ld_auto_lookup):
+								self.warn("{} was found to load {}".format(ld_auto_lookup, libc_id))
+								self.elf = self.change_ld(elf, ld_auto_lookup)
+								break
 				else:
-					self.elf = elf
+					# ld is not changed
+					if libs:
+						self.warn("Both interpreter and libc are not given!")
+					if not isinstance(elf, ELF):
+						self.elf = ELF(elf)
+					else:
+						self.elf = elf
 		
 		library_needed = set()
 		r = os.popen("patchelf --print-needed " + self.elf.path).readlines()
@@ -70,7 +96,7 @@ class Pwn:
 		if self._env[mode]:
 			env['LD_PRELOAD'] = ':'.join(self._env[mode])
 		if args.GDB:
-			return gdb.debug([self.elf.path] + argv, env=env, *a, **kw)
+			return gdb.debug([self.elf.path] + argv, gdbscript=self.gdbscript, env=env, *a, **kw)
 		else:
 			io = process([self.elf.path] + argv, env=env, *a, **kw)
 			if args.ATTACH:
@@ -90,6 +116,19 @@ class Pwn:
 		return r.strip()
 
 	@staticmethod
+	def get_ld_by_libc(libc):
+		libc_abspath = os.path.abspath(libc)
+		p = subprocess.Popen("{}/identify {}".format(LIBC_DATABASE_PATH, libc_abspath), 
+				shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		(stdout, stderr) = p.communicate()
+		if stderr:
+			self.warn(stderr)
+		if stdout:
+			return stdout.split()[1]
+		else:
+			return ''
+
+	@staticmethod
 	def set_interpreter(ld_path, binary):
 		if not os.path.exists(ELF_TMPPATH):
 			os.mkdir(ELF_TMPPATH)
@@ -104,7 +143,7 @@ class Pwn:
 	def change_ld(binary, ld):
 		if not isinstance(binary, ELF):
 			if not os.path.isfile(binary): 
-				log.failure("Invalid path {}: File does not exists".format(binary))
+				self.failure("Invalid path {}: File does not exists".format(binary))
 				return None
 			else:
 				binary = ELF(binary)
@@ -113,137 +152,13 @@ class Pwn:
 
 		if not os.path.isfile(ld):
 			if not ld in ['2.23', '2.24', '2.25', '2.26', '2.27', '2.28', '2.29']:
-				log.failure("Invalid path {}: File does not exists".format(ld))
+				self.failure("Invalid path {}: File does not exists".format(ld))
 				return None
 			else:
 				ld =  '/glibc/{}/{}/lib/ld-{}.so'.format(arch, ld, ld)
 		ld_abs_path = os.path.abspath(ld)
 		pwn_elf_path = Pwn.set_interpreter(ld_abs_path, binary)
 		return ELF(pwn_elf_path)
-
-def create_symlink(src, dst):
-	if os.path.islink(dst):
-		log.info("Removing exist link %s", dst)
-		os.remove(dst)
-	os.symlink(src, dst)
-	if not os.access(dst, os.F_OK): 
-		log.failure("Create symlink {} ==> {} file failed".format(dst, src))
-		return False
-	os.chmod(dst, 0b111000000) #rwx------
-	return dst
-
-def save_elf(binary):
-	if not os.access(ELF_TMPPATH, os.F_OK):
-		os.mkdir(ELF_TMPPATH)
-	path = '{}/{}'.format(ELF_TMPPATH, os.path.basename(binary.path))
-	if os.access(path, os.F_OK): 
-		os.remove(path)
-		log.info("Removing exist file {}".format(path))
-	binary.save(path)
-	if not os.access(path, os.F_OK):
-		log.failure("Save file {} failed".format(path))
-		return False
-	os.chmod(path, 0b111000000) #rwx------
-	return path
-
-def change_ld(binary, ld):
-	"""
-	Force to use assigned new ld.so by changing the binary
-	"""
-	if not os.access(ld, os.R_OK): 
-		log.failure("Invalid path {} to ld".format(ld))
-		return None
-	abs_path = os.path.abspath(ld)
-  
-	if not isinstance(binary, ELF):
-		if not os.access(binary, os.R_OK): 
-			log.failure("Invalid path {} to binary".format(binary))
-			return None
-		binary = ELF(binary)
- 
- 
-	for segment in binary.segments:
-		if segment.header['p_type'] == 'PT_INTERP':
-			size = segment.header['p_memsz']
-			addr = segment.header['p_paddr']
-			data = segment.data()
-			if size <= len(LD_TMPNAME):
-				log.failure("Failed to change PT_INTERP from {} to {}".format(data, ld))
-				return None
-			if not create_symlink(abs_path, LD_TMPNAME):
-				return None
-			binary.write(addr, LD_TMPNAME.ljust(size, '\x00'))
-			path = save_elf(binary)
-			if not path:
-				return None
-	log.success("PT_INTERP has changed from {} to {}. Using temp file {}".format(data, ld, path)) 
-	return ELF(path)
-
-def change_libc(binary, lib_path):
-	return change_lib(binary, "libc.so.6", lib_path)
-
-def change_lib(binary, lib_name, lib_path, lib_id=0):
-	"""
-	Force to use assigned new lib by changing the binary
-	"""
-	if not os.path.isfile(lib_path): 
-		log.failure("Invalid path {} to {}".format(lib_path, lib_name))
-		return None
-	abs_path = os.path.abspath(lib_path)
-
-	if not isinstance(binary, ELF):
-		if not os.access(binary, os.R_OK): 
-			log.failure("Binary file must be an ELF instance")
-			return None
-		binary = ELF(binary)
-
-	for segment in binary.segments:
-		if segment.header['p_type'] == 'PT_INTERP':
-			size = segment.header['p_memsz']
-			addr = segment.header['p_paddr']
-			data = segment.data()
-
-	strtab = binary.dynamic_value_by_tag('DT_STRTAB')
-	
-	lib_str_offset = None
-	lib_id = lib_id
-	binary_dynamic = binary.get_section_by_name('.dynamic')
-	if not binary_dynamic:
-		log.failure("binary_dynamic not found")
-		return None
-	dynamic_tags = binary_dynamic.iter_tags()
-	while True:
-		try:
-			next_lib_offset = next(t for t in dynamic_tags if 'DT_NEEDED' == t.entry.d_tag).entry.d_val
-			lib_tmp_name = '/tmp/l{}'.format(lib_id)
-			lib_id += 1
-			if binary.string(next_lib_offset + strtab) == lib_name:
-				lib_str_offset = next_lib_offset + strtab
-				break
-		except StopIteration:
-			break
-	
-	if not lib_str_offset:
-		log.failure("string {} not found".format(lib_name))
-		return None
-
-	if not create_symlink(abs_path, lib_tmp_name):
-		log.failure("create symlink from {} to {} failed!".format(abs_path, lib_tmp_name))
-		return None
-
-	dir_name, file_name = os.path.split(abs_path)
-	if lib_name == "libc.so.6" and os.path.isdir(dir_name + "/.debug"):
-		if os.path.isdir(dir_name + "/.debug/" + os.path.splitext(file_name)[0]):
-			create_symlink(dir_name + "/.debug/" + os.path.splitext(file_name)[0], '/tmp/.debug')
-		else:
-			create_symlink(dir_name + "/.debug", '/tmp/.debug')
-
-	binary.write(lib_str_offset, lib_tmp_name.ljust(len(lib_name), '\x00'))	
-	path = save_elf(binary)
-	if not path:
-		log.failure("binary save failed!")
-		return None
-	return ELF(path)
 
 def mod_attack(n, e1, c1, e2, c2):
     """
@@ -290,3 +205,80 @@ def mod_attack(n, e1, c1, e2, c2):
         s2 = -s2
         c2 = modinv(c2, n)
     return pow(c1, s1, n) * pow(c2, s2, n) % n
+
+class Tea:
+
+	delta = 0x9e3779b9
+
+	@staticmethod
+	def encrtypt_chunk(chunk1, chunk2, key, tround):
+		assert(len(chunk1) == 4)
+		assert(len(chunk2) == 4)
+		assert(len(key) == 16)
+
+		tsum = 0
+		x = u32(chunk1)
+		y = u32(chunk2)
+		keyarr = [key[i:i+4] for i in range(0, len(key), 4)]
+		for i in range(tround):
+			tsum += Tea.delta
+			x += ((y << 4) + u32(keyarr[0])) ^ (y + tsum) ^ ((y >> 5) + u32(keyarr[1]))
+			x = x & 0xffffffff
+			y += ((x << 4) + u32(keyarr[2])) ^ (x + tsum) ^ ((x >> 5) + u32(keyarr[3]))
+			y = y & 0xffffffff
+		return x, y 
+
+	@staticmethod
+	def encrypt(content, key, tround=32):
+		assert(len(content) % 8 == 0)
+		assert(len(key) == 16)
+		res = []
+		content_arr = [content[i:i+8] for i in range(0, len(content), 8)]
+
+		for c in content_arr:
+			x, y = Tea.encrtypt_chunk(c[:4], c[4:8], key, tround)
+			res.append((y << 32) + x)
+		return ''.join([p64(i) for i in res])
+
+	@staticmethod
+	def decrypt_chunk(chunk1, chunk2, key, tround=32):
+		assert(len(chunk1) == 4)
+		assert(len(chunk2) == 4)
+		assert(len(key) == 16)
+
+		tsum = Tea.delta << int(math.log(tround, 2))
+		x = u32(chunk1)
+		y = u32(chunk2)
+		keyarr = [key[i:i+4] for i in range(0, len(key), 4)]
+		for i in range(tround):
+			y -= ((x << 4) + u32(keyarr[2])) ^ (x + tsum) ^ ((x >> 5) + u32(keyarr[3]))
+			y = y & 0xffffffff
+			x -= ((y << 4) + u32(keyarr[0])) ^ (y + tsum) ^ ((y >> 5) + u32(keyarr[1]))
+			x = x & 0xffffffff
+			tsum -= Tea.delta
+		return x, y 
+
+	@staticmethod
+	def decrypt(content, key, tround=32):
+		assert(len(content) % 8 == 0)
+		assert(len(key) == 16)
+		res = []
+		content_arr = [content[i:i+8] for i in range(0, len(content), 8)]
+
+		for c in content_arr:
+			x, y = Tea.decrypt_chunk(c[:4], c[4:8], key, tround)
+			res.append((y << 32) + x)
+		return ''.join([p64(i) for i in res])
+
+class Random():
+
+	randomelf = os.path.split(os.path.realpath(__file__))[0] + "/random.elf"
+
+	@staticmethod
+	def get(seed, count=10000):
+		assert(type(seed) == int)
+		p = subprocess.Popen("{} {}".format(Random.randomelf, seed), 
+			shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		(stdout, stderr) = p.communicate()
+		if stdout:
+			return stdout.split()[:count]

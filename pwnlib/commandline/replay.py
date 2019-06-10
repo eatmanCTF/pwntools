@@ -237,7 +237,7 @@ class ReplayScript(object):
         'from pwnlib.replay import Address',
         '',
         'def attack(ip=None, port=None, local_test=False):',
-        '    pwn = Pwn("{}", debug_version="2.27", local_libs=["{}", "{}"], host="{}", port={})',
+        '    pwn = Pwn("{}", src="2.27", libs=["{}", "{}"], host="{}", port={})',
         '    if local_test:',
         '        context.terminal = ["tmux", "splitw", "-h"]',
         '    else:',

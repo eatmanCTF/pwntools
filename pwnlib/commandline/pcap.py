@@ -55,11 +55,11 @@ class Pcap:
                 others.append(p)
         return streams, others
 
-    def summary(self,clients={},servers={}):
+    def summary(self, clients={}, servers={}):
         summary = {}
         for stream_id in self.streams.keys():
-            
-            client,server = Pcap.stream_id_to_names(stream_id,clients,servers)
+
+            client, server = Pcap.stream_id_to_names(stream_id, clients, servers)
 
             if server not in summary:
                 summary.update({server: {}})
@@ -70,7 +70,7 @@ class Pcap:
                 summary[server][client] += 1
             # print(client, service)
         return summary
-    
+
     def search(self, data):
         """返回在tcp层数据存在data的pkt列表，其中data是bytes格式"""
         return [p for p in self.pkts if data in raw(p.getlayer(TCP).payload)]
@@ -119,7 +119,7 @@ class Pcap:
             return sesion_id_rev
 
     def stream_to_json(self, stream_id):
- 
+
         pkts = self.streams[stream_id]
 
         count_request = 0
@@ -129,16 +129,16 @@ class Pcap:
 
         for i, pkt in enumerate(pkts):
 
-            if not pkt.haslayer(Raw) :
+            if not pkt.haslayer(Raw):
                 continue
-            
+
             tcp_raw = pkt.getlayer(Raw)
             if tcp_raw.haslayer(Padding):
                 tcp_raw.remove_payload()
 
             tcp_data = raw(tcp_raw)
-            
-            session_id,session_id_rev = self.get_session_id(pkt)
+
+            session_id, session_id_rev = self.get_session_id(pkt)
 
             if session_id == stream_id:
                 name = "peer{}_{}".format(0, count_request)
@@ -158,27 +158,26 @@ class Pcap:
                 }
             })
         return res
-    
-    def stream_to_vector(self,stream_id):
+
+    def stream_to_vector(self, stream_id):
         stream_json = self.stream_to_json(stream_id)
         res = []
         for pkt_info in stream_json:
-            name,info = pkt_info.items()[0]
+            name, info = pkt_info.items()[0]
             if "peer0" in name:
                 res.append(len(info['ascii']))
             else:
-                res.append( -len(info['ascii']))
-        
+                res.append(-len(info['ascii']))
+
         for i in range(len(res) - 1):
             if res[i] * res[i + 1] > 0:
-                res[i+1] += res[i]
+                res[i + 1] += res[i]
                 res[i] = 0
 
         res = [n for n in res if n != 0]
 
-        return {stream_id[1]:res}
+        return {stream_id[1]: res}
 
-    
     def payload_to_ascii(self, payload):
         if payload != None:
             return re.sub(b'[^\x1f-\x7f]', b'.', payload).decode()
@@ -188,16 +187,16 @@ class Pcap:
 
     def dump_pkts_as_pcap(self, filename, pkts):
         wrpcap(filename, pkts)
-    
+
     @staticmethod
-    def tcpdump(input_file,output_file,bpf,vlan=True):
+    def tcpdump(input_file, output_file, bpf, vlan=True):
         if vlan:
             bpf = "vlan and " + bpf
         cmd = 'tcpdump -r {} "{}" -w {}'.format(input_file, bpf, output_file)
         os.system(cmd)
 
     @staticmethod
-    def stream_id_to_names(stream_id,clients = {},servers = {}):
+    def stream_id_to_names(stream_id, clients={}, servers={}):
         src, sport, dst, dport = list(stream_id)
 
         client_name = src
@@ -207,16 +206,17 @@ class Pcap:
                 client_name = name
 
         server_name = "{}:{}".format(dst, dport)
-        for name,conn in servers.items():
+        for name, conn in servers.items():
             if server_name == conn:
                 server_name = name
 
-        return client_name ,server_name
+        return client_name, server_name
+
 
 def split(filename, config, vlan=True):
     """"""
     filename = os.path.basename(filename)
-    folder,_ = os.path.splitext(filename)
+    folder, _ = os.path.splitext(filename)
 
     os.system("mkdir -p {}".format(folder))
 
@@ -224,14 +224,13 @@ def split(filename, config, vlan=True):
         ip, port = conn.split(":")
         bpf = "(src host {0} and src port {1}) or (dst host {0} and dst port {1})".format(ip, port)
         pcap_gamebox = "{}/{}.pcap".format(folder, gamebox_name)
-        Pcap.tcpdump(filename,pcap_gamebox,bpf,vlan)
+        Pcap.tcpdump(filename, pcap_gamebox, bpf, vlan)
 
-        os.system("mkdir -p {}/{}".format(folder,gamebox_name))
-        for team_name,net in config["teams"].items():
+        os.system("mkdir -p {}/{}".format(folder, gamebox_name))
+        for team_name, net in config["teams"].items():
             bpf = "net {}".format(net)
-            pcap_gamebox_team = "{}/{}/{}.pcap".format(folder,gamebox_name,team_name)
-            Pcap.tcpdump(pcap_gamebox,pcap_gamebox_team,bpf,vlan)
-
+            pcap_gamebox_team = "{}/{}/{}.pcap".format(folder, gamebox_name, team_name)
+            Pcap.tcpdump(pcap_gamebox, pcap_gamebox_team, bpf, vlan)
 
 
 parser = common.parser_commands.add_parser(
@@ -296,7 +295,7 @@ def main(args):
         config = {
             "gameboxs": {
                 "gamebox1": "172.16.5.20:5051"
-            }, 
+            },
             "teams": {
                 "team1": "172.16.5.12/32",
                 "team2": "172.16.5.22/32"
@@ -314,8 +313,8 @@ def main(args):
     pcap = Pcap(args.pcap_file)
 
     if args.summary:
-        print(json.dumps(pcap.summary(config["teams"], config["gameboxs"] ), indent=4))
-    
+        print(json.dumps(pcap.summary(config["teams"], config["gameboxs"]), indent=4))
+
     if args.analyse:
         for stream_id in pcap.streams:
             print(pcap.stream_to_vector(stream_id))
@@ -333,12 +332,12 @@ def main(args):
 
         for p in pkts:
             stream_id = pcap.follow_tcp_stream(p)
-            team,gamebox = Pcap.stream_id_to_names(stream_id,config["teams"], config["gameboxs"])
-            
-            out_path = "output/{}_{}_{}.json".format(gamebox, team, pcap.streams[stream_id][0].time)
+            team, gamebox = Pcap.stream_id_to_names(stream_id, config["teams"], config["gameboxs"])
+            pkts = pcap.streams[stream_id]
+            out_path = "output/{}_{}_{}_{}.json".format(gamebox, team, pcap.pkts.index(pkts[0]) + 1, len(pkts))
             log.info("保存数据到文件:{}".format(out_path))
             with open(out_path, 'w') as outfile:
-                json.dump(pcap.stream_to_json(stream_id) , outfile, indent=4)
+                json.dump(pcap.stream_to_json(stream_id), outfile, indent=4)
 
 
 if __name__ == '__main__':

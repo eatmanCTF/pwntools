@@ -60,7 +60,7 @@ class Duplication(Relation):
         super(Duplication, self).__init__(r_difference, s_difference)
 
     def __str__(self):
-        return '[Class]Duplication [RecvPeer]{} [RecvPosition]{} [SendPeer]{} [SendPosition]{} [Length]{}\n\t[Content]{}\n\t[Hexdump]{}'.format(
+        return '[Class]Duplication [RecvPeer]{} [RecvPosition]{} [SendPeer]{} [SendPosition]{} [Length]{} [Content]{} [Hexdump]{}'.format(
             self.r_difference.peer.name, self.r_difference.position,
             self.s_difference.peer.name, self.s_difference.position,
             self.s_difference.length,

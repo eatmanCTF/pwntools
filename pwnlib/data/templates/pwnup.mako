@@ -40,7 +40,10 @@ binary_repr = repr(binary)
 %endif
 from pwn import *
 from roputils import ROP
-
+import re
+import os
+import time
+import numpy as np
 %if not quiet:
 # Many built-in settings can be controlled on the command-line and show up
 # in "args".  For example, to dump all data sent/received, and disable ASLR
@@ -85,22 +88,32 @@ gdbscript = '''
 %if not quiet:
 # Set up pwntools for the correct architecture
 %endif
-context.update(terminal=['tmux', 'splitw', '-h'])
+
+def attack(ip=None, port=None, local_test=False):
+    if local_test:
+        context.terminal = ["tmux", "splitw", "-h", "-p", "60"]
+        pwn = Pwn(${binary_repr}, 
+            src='2.27', 
+            libs=[], 
+            host=host, port=port, gdbscript=gdbscript)
+        elf = context.binary = pwn.elf
+        libc = pwn.libc
+        rop = ROP(elf.path)
+        io = pwn.start()
+    else:
+        elf = ELF(${binary_repr})
+        libc = elf.libc
+        rop = ROP(elf.path)
+        io = remote(ip, port)
+    flag = exp(io, libc, rop, elf)
+    io.close()
+    return flag
 %if ctx.binary:
-pwn = Pwn(${binary_repr}, 
-    src='2.27', 
-    libs=[], 
-    host=host, port=port, gdbscript=gdbscript)
-elf = context.binary = pwn.elf
-libc = pwn.libc
-rop = ROP(elf.path)
 <% binary_repr = 'elf.path' %>
 %else:
 context.update(arch='i386')
-elf = ${binary_repr}
 <% binary_repr = 'elf' %>
 %endif
-
 %if not quiet:
 #===========================================================
 #                    EXPLOIT GOES HERE
@@ -117,8 +130,8 @@ elf = ${binary_repr}
 # ${line}
 %endfor
 %endif
-
-io = pwn.start()
+def exp(io, libc, rop, elf):
+    io.interactive()
 
 %if not quiet:
 # shellcode = asm(shellcraft.sh())
@@ -131,4 +144,5 @@ io = pwn.start()
 # log.success(flag)
 %endif
 
-io.interactive()
+if __name__ == "__main__":
+    attack(local_test=True)

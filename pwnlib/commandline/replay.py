@@ -10,7 +10,7 @@ from pwnlib.context import context
 from pwnlib.elf.elf import ELF
 from pwnlib.exception import PwnlibException
 from pwnlib.args import free_form
-import argparse
+import argparse, textwrap
 import sys
 import os
 import re
@@ -20,8 +20,13 @@ log = getLogger(__name__)
 
 parser = common.parser_commands.add_parser(
     'replay',
-    help='Replay attack helper'
-)
+    help='Replay attack helper',
+    formatter_class=argparse.RawTextHelpFormatter,
+    description=textwrap.dedent('''\
+    Example:
+    replay --elf [ELF] --p2p --wireshark --host [HOST] --port [PORT] ./ > replay.py
+    replay --hexdump peer0_0 --wireshark ./
+    '''))
 
 parser.add_argument(
     '--host',
@@ -93,14 +98,13 @@ parser.add_argument(
     nargs='?',
     type=int,
     default=7,
-    help=
-'''Address Level:********* R_F8|R_M28|R_L12|R_0 *********
-R_F8: First 8 bits of received addresses must same
-R_M28: Middle 28 bits of received addresses must be different
-R_L12: Last 12 bits of received addresses must same 
-R_0: offset value must not equals to 0
-'''
-)
+    help=textwrap.dedent('''\
+    Address Level: R_F8|R_M28|R_L12|R_0 
+    R_F8: First 8 bits of received addresses must same
+    R_M28: Middle 28 bits of received addresses must be different
+    R_L12: Last 12 bits of received addresses must same 
+    R_0: offset value must not equals to 0
+    '''))
 
 parser.add_argument(
     '--no-auto',
@@ -319,11 +323,13 @@ class ReplayScript(object):
                 template = df
         return template
 
-    def _output_comment(self, string, textcolor=None):
+    def _output_comment(self, string, textcolor=None, debug=False):
         if not textcolor:
             textcolor = text.magenta
         if not self.quiet:
-            sys.stdout.write(textcolor("# " + string))
+            sys.stdout.write(textcolor("# " + str(string) + "\n"))
+        if debug:
+            log.debug(textcolor("# " + str(string)))
 
     def _output(self, string, textcolor=None, valid=True):
         if not textcolor:
@@ -363,8 +369,10 @@ class ReplayScript(object):
             expected_content = Bytes.to_printable(expected_content)
         if peer[start:end].tail_character is None:
             if peer.recv_method == 'recvuntil':
-                self._output('log.warn("{} length is too long and cannot handled by recvn, so it is treated as an useless recv")\n'.format(peer.name))
-                self._output('io.recvrepeat(timeout={})\n'.format(self.recv_timeout))
+                self._output(
+                    'log.warn("{} length is too long and cannot handled by recvn, so it is treated as an useless recv")\n'.format(peer.name))
+                self._output(
+                    'io.recvrepeat(timeout={})\n'.format(self.recv_timeout))
                 return
         else:
             self._output('io.recvuntil("{}", timeout={}, template=\n"""{}""", {} mark="{}", retrieve="", pause={})\n'.format(
@@ -379,9 +387,9 @@ class ReplayScript(object):
         ), valid=self.recvn or peer.recv_method == 'recvn')
 
     def _render_received_peer(self, peer, relation_list):
-        self._output_comment('*' * 100 + '\n')
-        self._output_comment('Received {}:\n'.format(peer.name))
-        self._output_comment('*' * 100 + '\n')
+        self._output_comment('*' * 100)
+        self._output_comment('Received {}:'.format(peer.name))
+        self._output_comment('*' * 100)
         # peer_offsets: all offsets matched peer
         peer_offsets = [rel for rel in relation_list if type(rel) == Offset
                         and peer in [offset.raddr.peer for offset in rel.all()]]
@@ -399,7 +407,7 @@ class ReplayScript(object):
                 # first raddr that contains information in a offset object
                 if vof.color is None:
                     vof.color = self._get_alternate_color()
-                self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(
+                self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}'.format(
                     vof.id, raddr.hex, raddr.position, vof.hex), vof.color)
                 if not raddr.related_to:
                     # receive this raddr first time, do actual receive and numb goes forward
@@ -433,9 +441,9 @@ class ReplayScript(object):
         self._render_receive(peer, numb, peer.length, expected_recv)
 
     def _render_send_peer(self, peer, relation_list):
-        self._output_comment('*' * 100 + '\n')
-        self._output_comment('Sending {}:\n'.format(peer.name))
-        self._output_comment('*' * 100 + '\n')
+        self._output_comment('*' * 100)
+        self._output_comment('Sending {}:'.format(peer.name))
+        self._output_comment('*' * 100)
         # send peer may contains several addresses
         has_valid_addr = False
         # numb is how many bytes has added to payload
@@ -455,7 +463,7 @@ class ReplayScript(object):
                     self._output('payload = ""\n')
                 if vof.color is None:
                     vof.color = self._get_alternate_color()
-                self._output_comment('[VOF_S{}]\taddr:{}\tpos:{}\toffset_val:{}\n'.format(
+                self._output_comment('[VOF_S{}]\taddr:{}\tpos:{}\toffset_val:{}'.format(
                     vof.id, saddr.hex, saddr.position, vof.hex), vof.color)
                 self._output(
                     'addr_send_{} = Address.transformAs(addr_recv_{} - {} + {}, "{}", "{}", "{}")\n'.format(
@@ -561,27 +569,16 @@ class ReplayScript(object):
         # TODO: use mako template to do render
         df = self.template_file
         log.info('Start rendering...')
-        log.debug('Using template file "{}"'.format(df.name))
-        log.debug('===============Template file\'s address list[size: {}]==============='.format(
-            len(df.addr_list)))
-        for addr in df.addr_list:
-            log.debug(addr)
-
         sys.stdout.write('\n'.join(self.content_head).format(
-            self.elf.file.name, 
+            self.elf.file.name,
             self.ld, self.libc,
             self.host, self.port,
         ) + '\n')
-
         self._output_comment(
-            'Using template: {}\n'.format(self.template_file.name))
-        # relation_list is empty if there is no send_addr in data file
-        log.debug('===============Template file\'s relation list[size: {}]==============='.format(
-            len(df.relation_list)))
+            'Using template: {}'.format(df.name), debug=True)
         if self.custom_handler:
-            self._output('Address.register_custom_handler_file("{}")\n'.format(self.custom_handler))
-        for rel in df.relation_list:
-            log.debug(rel)
+            self._output('Address.register_custom_handler_file("{}")\n'.format(
+                self.custom_handler))
         for peer in df.peer_sequence:
             log.debug('Rendering {}...'.format(peer.name))
             if peer.direction == DIRECTION_RECV:
@@ -589,7 +586,25 @@ class ReplayScript(object):
             elif peer.direction == DIRECTION_SEND:
                 self._render_send_peer(peer, df.relation_list)
         self._output('io.interactive()\n')
-        sys.stdout.write('\n'.join(self.content_tail))
+        sys.stdout.write('\n'.join(self.content_tail) + "\n\n\n")
+        self._output_comment('*' * 50 +
+                             'DEBUG_INFO' + '*' * 50)
+        # relation_list is empty if there is no send_addr in data file
+        self._output_comment('===============Template file\'s relation list[size: {}]==============='.format(
+            len(df.relation_list)), debug=True)
+        for rel in df.relation_list:
+            self._output_comment(rel, debug=True)
+        self._output_comment('===============Template file\'s address list[size: {}]==============='.format(
+            len(df.addr_list)), debug=True)
+        for addr in df.addr_list:
+            self._output_comment(addr, debug=True)
+
+        for cmp_df in self.df_list:
+            if not cmp_df is df:
+                self._output_comment('===============File {}\'s address list[size: {}]==============='.format(
+                    cmp_df.name, len(cmp_df.addr_list)), debug=True)
+                for rel in cmp_df.addr_list:
+                    self._output_comment(addr, debug=True)
 
     def do_p2p_analysis(self):
         self.do_combine()
@@ -603,7 +618,8 @@ class ReplayScript(object):
                 log.info("Send difference detected in %s", peer.name)
                 has_difference = True
         if not has_difference:
-            log.success("Congratulations! No send difference detected! We will make it!")
+            log.success(
+                "Congratulations! No send difference detected! We will make it!")
 
     def do_normal_analysis(self):
         if self.combine:
@@ -639,11 +655,12 @@ def hexdump_peer(args):
             log.info(pn)
             df.hexdump_peer(pn)
 
+
 def main(args):
     log.info("Welcome to use AGRS(auto-generate-replay-script) tool")
     if args.custom_handler:
         Address.register_custom_handler_file(args.custom_handler)
-        
+
     if args.custom_template:
         Address.generate_custom_handler_template(args.quiet)
         return
@@ -668,6 +685,7 @@ def main(args):
             rs.render()
         except PwnlibException:
             pass
+
 
 if __name__ == '__main__':
     common.main(__file__)

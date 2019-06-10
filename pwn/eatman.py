@@ -63,7 +63,7 @@ class Pwn(Logger):
 						self.elf = elf
 		
 		library_needed = set()
-		r = os.popen("patchelf --print-needed " + self.elf.path).readlines()
+		r = os.popen("patchelf --print-needed '{}'".format(self.elf.path)).readlines()
 		for l in r:
 			if not 'ld-' in l:
 				library_needed.add(l)
@@ -119,13 +119,13 @@ class Pwn(Logger):
 	@staticmethod
 	def get_so_name(ld_path):
 		ld_abspath = os.path.abspath(ld_path)
-		r = os.popen("patchelf --print-soname " + ld_abspath).read()
+		r = os.popen("patchelf --print-soname '{}'".format(ld_abspath)).read()
 		return r.strip()
 
 	@staticmethod
 	def get_ld_by_libc(libc):
 		libc_abspath = os.path.abspath(libc)
-		p = subprocess.Popen("{}/identify {}".format(LIBC_DATABASE_PATH, libc_abspath), 
+		p = subprocess.Popen("{}/identify '{}'".format(LIBC_DATABASE_PATH, libc_abspath), 
 				shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 		(stdout, stderr) = p.communicate()
 		if stderr:

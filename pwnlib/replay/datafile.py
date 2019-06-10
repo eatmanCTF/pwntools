@@ -243,9 +243,10 @@ class DataFile(object):
                 for i in range(diff.position, diff.position+diff.length):
                     diff.peer.mark_related(i)
         self.refresh_relations()
+        log.debug('Final diff in file {}:'.format(self.name))
         for peer in self.peer_sequence:
             for diff in peer.difference_list:
-                log.info(diff)
+                log.debug(diff)
         self.relation_list = offset_list + self.duplication_list
 
     def hexdump_peer(self, peer_name):

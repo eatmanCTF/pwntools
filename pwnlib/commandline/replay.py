@@ -237,7 +237,7 @@ class ReplayScript(object):
         'from pwnlib.replay import Address',
         '',
         'def attack(ip=None, port=None, local_test=False):',
-        '    pwn = Pwn("{}", src="2.27", libs=["{}", "{}"], host="{}", port={})',
+        '    pwn = Pwn("{}", src="2.27", libs=[{}{}], host="{}", port={})',
         '    if local_test:',
         '        context.terminal = ["tmux", "splitw", "-h"]',
         '    else:',
@@ -327,9 +327,9 @@ class ReplayScript(object):
         if not textcolor:
             textcolor = text.magenta
         if not self.quiet:
-            sys.stdout.write(textcolor("# " + str(string) + "\n"))
+            sys.stdout.write(textcolor("# " + str(string).replace("\n", "\n#") + "\n"))
         if debug:
-            log.debug(textcolor("# " + str(string)))
+            log.debug(str(string))
 
     def _output(self, string, textcolor=None, valid=True):
         if not textcolor:
@@ -571,7 +571,8 @@ class ReplayScript(object):
         log.info('Start rendering...')
         sys.stdout.write('\n'.join(self.content_head).format(
             self.elf.file.name,
-            self.ld, self.libc,
+            '"{}",'.format(self.ld) if self.ld else '',
+            '"{}",'.format(self.libc) if self.libc else '',
             self.host, self.port,
         ) + '\n')
         self._output_comment(

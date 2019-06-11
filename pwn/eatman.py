@@ -2,15 +2,15 @@ from __future__ import absolute_import
 
 import os
 import subprocess
-import re
+import re, random
+from pwnlib.context import context
 from pwnlib import gdb
-from pwnlib.log import Logger
 from pwnlib.args import args
 from pwnlib.elf import ELF
-from pwnlib.log import getLogger
+from pwnlib.log import Logger, getLogger
 from pwnlib.tubes.process import process
 from pwnlib.tubes.remote import connect
-from pwnlib.util.packing import u32, u64, p32, p64
+from pwnlib.util.packing import u32, u64, p32, p64, make_packer
 import shutil
 import sys
 import math
@@ -296,20 +296,89 @@ class MYFFI(CDLL):
 		if stdout:
 			return stdout.split()[0]
 
-	# class tm(Structure):
-	# 	_fields_ = [
-	# 		('tm_sec', c_int),
-	# 		('tm_min', c_int),
-	# 		('tm_hour', c_int),
-	# 		('tm_mday', c_int),
-	# 		('tm_mon', c_int),
-	# 		('tm_year', c_int),
-	# 		('tm_wday', c_int),
-	# 		('tm_yday', c_int),
-	# 		('tm_isdst', c_int),
-	# 	]
+class classproperty(property):
+    def __get__(self, cls, owner):
+        return classmethod(self.fget).__get__(None, owner)()
 
-	# def __getattr__(self, name):
-	# 	if not hasattr(self, name):
-	# 		return self.lib.__getattr__(name)
-	# 	return super(CFFI, self).__getattr__(name)
+class Jam(str):
+
+	_libc = None
+	_symbols = [
+		'system', 'execve', 'open', 'read', 'write', 'gets', 'setcontext', 
+		'__malloc_hook', '__free_hook', '__realloc_hook', 'stdin', 'stdout', '_IO_list_all', '__after_morecore_hook'
+	]
+	_bits = context.bits
+	_endian = context.endian
+	_avoid = []
+
+	def __new__(cls, value, *args, **kwargs):
+		return str.__new__(cls, value)
+
+	@classproperty
+	def chars(cls):
+		return [chr(i) for i in range(0xff) if i not in cls._avoid]
+
+	@classproperty
+	def packer(cls):
+		return make_packer(cls._bits, endian=cls._endian, sign='unsigned')
+
+	@classproperty
+	def libc(cls):
+		if cls._libc is None:
+			with open(os.path.split(os.path.realpath(__file__))[0] + "/libc_{}".format("amd64" if bits==64 else "i386"), "r") as fp:
+				names =[name.strip() for name in fp.readlines()]
+				libc_path = ''
+				max_count = 100
+				while max_count >= 0:
+					libc_path = LIBC_DATABASE_PATH + "/db/" + random.choice(names)
+					if os.path.isfile(libc_path):
+						break
+					max_count -= 1
+				else:
+					print 'unknown libc database path: {}'.format(LIBC_DATABASE_PATH)
+				cls._libc = ELF(libc_path)
+		return cls._libc
+
+	@staticmethod
+	def context(endian=None, bits=None, avoid=[]):
+		if endian:
+			Jam._endian = endian
+		if bits:
+			Jam._bits = bits
+		if avoid:
+			Jam._avoid = avoid
+
+	def jam(self, size):
+		"""
+		return :str
+		"""
+		ptrsize = context.bits / 8
+		count = size / ptrsize
+		addition = size % ptrsize
+		jam = ''
+		for i in range(count):
+			while True:
+				try:
+					ptr = self._libc.symbols[random.choice(self._symbols)]
+				except:
+					continue
+				break
+			jam += self._packer(ptr)
+		for i in range(addition):
+			jam += random.choice(self._chars)
+		return jam
+
+	def lfill(self, size):
+		"""
+		return :str
+		"""
+		if self.__len__() > size:
+			return self
+		else:
+			return self + self.jam(size - self.__len__())
+	
+	def rfill(self, size):
+		if self.__len__() > size:
+			return self
+		else:
+			return self.jam(size - self.__len__()) + self

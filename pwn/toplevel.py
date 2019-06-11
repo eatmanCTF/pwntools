@@ -18,7 +18,7 @@ import time
 from pprint import pprint
 
 import pwnlib
-from eatman import Pwn, mod_attack, Tea
+from eatman import Pwn, Jam, mod_attack, Tea
 from pwnlib import *
 from pwnlib.asm import *
 from pwnlib.context import Thread

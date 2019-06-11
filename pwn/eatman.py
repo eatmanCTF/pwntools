@@ -17,21 +17,26 @@ import math
 from ctypes import *
 
 LIBC_DATABASE_PATH = "/mnt/hgfs/share/git/libc-database"
+LIBC_SRC_PATH = "/glibc"
 ELF_TMPPATH = "/tmp/pwn"
 
 
 class Pwn(Logger):
 
-	def __init__(self, elf, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999):
+	def __init__(self, elf, gdbscript='', src='2.27', libs=[], env=[], host='127.0.0.1', port=9999, remote=False):
 		super(Pwn, self).__init__()
-		self._debug_version = src
+		self._src = src
 		self._host = host
 		self._port = port
 		self.gdbscript = gdbscript
 		self._ffi = None
+		self._remote = remote
+
 		if args.SRC:
-			self.elf = self.change_ld(elf, self._debug_version)
-		else:
+		# change elf's iterpreter in src mode
+			self.elf = self.change_ld(elf, self._src)
+		elif not args.REMOTE and not self._remote:
+		# change elf's iterpreter in local mode
 			libc = ""
 			for (i, lib) in enumerate(libs):
 				# if iterpreter is given, change and break
@@ -42,7 +47,7 @@ class Pwn(Logger):
 				if Pwn.get_so_name(lib) == 'libc.so.6':
 					libc = lib
 			else:
-				# iterpreter is not given
+				# iterpreter is not given but libc is given
 				for i in range(1):
 					if libs and libc:
 						libc_id = Pwn.get_ld_by_libc(libc)
@@ -61,15 +66,22 @@ class Pwn(Logger):
 						self.elf = ELF(elf)
 					else:
 						self.elf = elf
+		else:
+			# remote mode
+			if not isinstance(elf, ELF):
+				self.elf = ELF(elf)
+			else:
+				self.elf = elf
 		
 		library_needed = set()
-		r = os.popen("patchelf --print-needed '{}'".format(self.elf.path)).readlines()
-		for l in r:
-			if not 'ld-' in l:
-				library_needed.add(l)
+		if not args.REMOTE and not self._remote:
+			r = os.popen("patchelf --print-needed '{}'".format(self.elf.path)).readlines()
+			for l in r:
+				if not 'ld-' in l:
+					library_needed.add(l)
 
 		self._env = {
-			'debug': ['/glibc/{}/{}/lib/{}'.format(self.elf.arch, src, lib.strip()) for lib in library_needed],
+			'debug': ['{}/{}/{}/lib/{}'.format(LIBC_SRC_PATH, self.elf.arch, src, lib.strip()) for lib in library_needed],
 			'local': [os.path.abspath(lib) for lib in libs],
 			'common': env
 		}
@@ -77,7 +89,7 @@ class Pwn(Logger):
 	@property
 	def libc(self):
 		if args.SRC:
-			return ELF('/glibc/{}/{}/lib/libc.so.6'.format(self.elf.arch, self._debug_version))
+			return ELF('{}/{}/{}/lib/libc.so.6'.format(LIBC_SRC_PATH, self.elf.arch, self._src))
 		else:
 			local_env = self._env['local']
 			for lib in local_env:
@@ -92,7 +104,7 @@ class Pwn(Logger):
 		return self._ffi
 
 	def start(self, argv=[], *a, **kw):
-		if args.REMOTE:
+		if args.REMOTE or self._remote:
 			return self.remote(argv, *a, **kw)
 		else:
 			return self.local(argv, *a, **kw)
@@ -112,8 +124,6 @@ class Pwn(Logger):
 
 	def remote(self, argv, *a, **kw):
 		io = connect(self._host, self._port, *a, **kw)
-		if args.GDB:
-			gdb.attach(io, gdbscript=self.gdbscript)
 		return io
 
 	@staticmethod
@@ -162,7 +172,7 @@ class Pwn(Logger):
 				self.failure("Invalid path {}: File does not exists".format(ld))
 				return None
 			else:
-				ld =  '/glibc/{}/{}/lib/ld-{}.so'.format(arch, ld, ld)
+				ld =  '{}/{}/{}/lib/ld-{}.so'.format(LIBC_SRC_PATH, arch, ld, ld)
 		ld_abs_path = os.path.abspath(ld)
 		pwn_elf_path = Pwn.set_interpreter(ld_abs_path, binary)
 		return ELF(pwn_elf_path)
@@ -303,29 +313,43 @@ class classproperty(property):
 class Jam(str):
 
 	_libc = None
-	_symbols = [
+
+	symbols = [
 		'system', 'execve', 'open', 'read', 'write', 'gets', 'setcontext', 
 		'__malloc_hook', '__free_hook', '__realloc_hook', 'stdin', 'stdout', '_IO_list_all', '__after_morecore_hook'
 	]
-	_bits = context.bits
-	_endian = context.endian
-	_avoid = []
+	symbol_idx = 0
+	_bits = None
+	_endian = None
+	avoid = []
 
 	def __new__(cls, value, *args, **kwargs):
 		return str.__new__(cls, value)
 
 	@classproperty
+	def bits(cls):
+		if not cls._bits:
+			return context.bits
+		return cls._bits
+
+	@classproperty
+	def endian(cls):
+		if not cls._endian:
+			return context.endian
+		return cls._endian
+	
+	@classproperty
 	def chars(cls):
-		return [chr(i) for i in range(0xff) if i not in cls._avoid]
+		return [chr(i) for i in range(0xff) if i not in cls.avoid]
 
 	@classproperty
 	def packer(cls):
-		return make_packer(cls._bits, endian=cls._endian, sign='unsigned')
+		return make_packer(cls.bits, endian=cls.endian, sign='unsigned')
 
 	@classproperty
 	def libc(cls):
 		if cls._libc is None:
-			with open(os.path.split(os.path.realpath(__file__))[0] + "/libc_{}".format("amd64" if bits==64 else "i386"), "r") as fp:
+			with open(os.path.split(os.path.realpath(__file__))[0] + "/libc_{}".format("amd64" if Jam.bits==64 else "i386"), "r") as fp:
 				names =[name.strip() for name in fp.readlines()]
 				libc_path = ''
 				max_count = 100
@@ -340,15 +364,25 @@ class Jam(str):
 		return cls._libc
 
 	@staticmethod
-	def context(endian=None, bits=None, avoid=[]):
+	def context(endian=None, bits=None, avoid=[], libc=None):
 		if endian:
-			Jam._endian = endian
+			Jam.endian = endian
 		if bits:
-			Jam._bits = bits
+			Jam.bits = bits
 		if avoid:
-			Jam._avoid = avoid
+			Jam.avoid = avoid
+		if type(libc) == ELF:
+			Jam._libc = libc
 
-	def jam(self, size):
+	@classproperty
+	def seed(cls):
+		if cls.bits == 64:
+			return random.randint(0, 0x1000000) << 12
+		else:
+			return random.randint(0, 0x100) << 12
+
+	@staticmethod
+	def fill(size):
 		"""
 		return :str
 		"""
@@ -358,14 +392,19 @@ class Jam(str):
 		jam = ''
 		for i in range(count):
 			while True:
+				retries = 0
 				try:
-					ptr = self._libc.symbols[random.choice(self._symbols)]
+					ptr = Jam.libc.symbols[Jam.symbols[Jam.symbol_idx % len(Jam.symbols)]]
+					Jam.symbol_idx += 1
 				except:
-					continue
+					Jam.symbol_idx += 1
+					retries += 1
+					if retries <= len(Jam.symbols):
+						continue
 				break
-			jam += self._packer(ptr)
+			jam += Jam.packer(ptr + Jam.seed)
 		for i in range(addition):
-			jam += random.choice(self._chars)
+			jam += random.choice(Jam.chars)
 		return jam
 
 	def lfill(self, size):
@@ -375,10 +414,10 @@ class Jam(str):
 		if self.__len__() > size:
 			return self
 		else:
-			return self + self.jam(size - self.__len__())
+			return self + Jam.fill(size - self.__len__())
 	
 	def rfill(self, size):
 		if self.__len__() > size:
 			return self
 		else:
-			return self.jam(size - self.__len__()) + self
+			return Jam.fill(size - self.__len__()) + self

@@ -54,10 +54,10 @@ import numpy as np
 %endif
 %endif
 %if host:
-host = args.HOST or ${repr(host)}
+host_localtest = args.HOST or ${repr(host)}
 %endif
 %if port:
-port = int(args.PORT or ${port})
+port_localtest = int(args.PORT or ${port})
 %endif
 %if user:
 user = args.USER or ${repr(user)}
@@ -89,24 +89,18 @@ gdbscript = '''
 # Set up pwntools for the correct architecture
 %endif
 
-def attack(ip=None, port=None, local_test=False):
+def attack(host=None, port=None, local_test=False):
     if local_test:
         context.terminal = ["tmux", "splitw", "-h", "-p", "60"]
-        pwn = Pwn(${binary_repr}, 
-            src='2.27', 
-            libs=[], 
-            host=host, port=port, gdbscript=gdbscript)
-        elf = context.binary = pwn.elf
-        libc = pwn.libc
-        rop = ROP(elf.path)
-        io = pwn.start()
-    else:
-        elf = ELF(${binary_repr})
-        libc = elf.libc
-        rop = ROP(elf.path)
-        io = remote(ip, port)
-    flag = exp(io, libc, rop, elf)
-    io.close()
+    pwn = Pwn(${binary_repr}, 
+        src='2.27', libs=[], 
+        host=host or host_localtest, port=port or port_localtest, 
+        gdbscript=gdbscript, remote=(not local_test))
+    elf = context.binary = pwn.elf
+    libc = pwn.libc
+    rop = ROP(elf.path)
+   
+    flag = exp(pwn, libc, rop, elf)
     return flag
 %if ctx.binary:
 <% binary_repr = 'elf.path' %>
@@ -130,8 +124,10 @@ context.update(arch='i386')
 # ${line}
 %endfor
 %endif
-def exp(io, libc, rop, elf):
+def exp(pwn, libc, rop, elf):
+    io = pwn.start()
     io.interactive()
+    io.close()
 
 %if not quiet:
 # shellcode = asm(shellcraft.sh())

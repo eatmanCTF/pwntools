@@ -92,6 +92,8 @@ gdbscript = '''
 def attack(host=None, port=None, local_test=False):
     if local_test:
         context.terminal = ["tmux", "splitw", "-h", "-p", "60"]
+    else:
+        context.log_level = 'CRITICAL'
     pwn = Pwn(${binary_repr}, 
         src='2.27', libs=[], 
         host=host or host_localtest, port=port or port_localtest, 
@@ -99,8 +101,8 @@ def attack(host=None, port=None, local_test=False):
     elf = context.binary = pwn.elf
     libc = pwn.libc
     rop = ROP(elf.path)
-   
     flag = exp(pwn, libc, rop, elf)
+    success(flag)
     return flag
 %if ctx.binary:
 <% binary_repr = 'elf.path' %>

@@ -10,7 +10,8 @@ from pwnlib.context import context
 from pwnlib.elf.elf import ELF
 from pwnlib.exception import PwnlibException
 from pwnlib.args import free_form
-import argparse, textwrap
+import argparse
+import textwrap
 import sys
 import os
 import re
@@ -99,10 +100,10 @@ parser.add_argument(
     type=int,
     default=7,
     help=textwrap.dedent('''\
-    Address Level: R_F8|R_M28|R_L12|R_0 
+    Address Level: R_F8|R_M28|R_L12|R_0
     R_F8: First 8 bits of received addresses must same
     R_M28: Middle 28 bits of received addresses must be different
-    R_L12: Last 12 bits of received addresses must same 
+    R_L12: Last 12 bits of received addresses must same
     R_0: offset value must not equals to 0
     '''))
 
@@ -231,23 +232,26 @@ class ReplayScript(object):
         text.cyan
     ]
 
-    content_head = [
-        '#!/usr/bin/python',
-        'from pwn import *',
-        'from pwnlib.replay import Address',
-        '',
-        'def attack(ip=None, port=None, local_test=False):',
-        '    pwn = Pwn("{}", src="2.27", libs=[{}{}], host="{}", port={})',
-        '    if local_test:',
-        '        context.terminal = ["tmux", "splitw", "-h"]',
-        '    else:',
-        '        args.REMOTE=True',
-        '    io = pwn.start()',
-    ]
-    content_tail = [
-        'if __name__ == "__main__":',
-        '    attack(local_test=True)',
-    ]
+    content_head = textwrap.dedent('''\
+        #!/usr/bin/python
+        from pwn import *
+        from pwnlib.replay import Address
+
+        def attack(host=None, port=None, local_test=False):
+            if local_test:
+                context.terminal = ["tmux", "splitw", "-h"]
+            else:
+                context.log_level = "CRITICAL"
+            recv_pause={} if local_test else False
+            send_pause={} if local_test else False
+            pwn = Pwn("{}", src="2.27", libs=[{}{}], host=host or "{}", port=port or {}, remote=(not local_test))
+            io = pwn.start()
+    ''')
+
+    content_tail = textwrap.dedent('''\
+        if __name__ == "__main__":
+            attack(local_test=True)
+    ''')
 
     def __init__(self, args):
         self.files = args.infiles or []
@@ -327,7 +331,8 @@ class ReplayScript(object):
         if not textcolor:
             textcolor = text.magenta
         if not self.quiet:
-            sys.stdout.write(textcolor("# " + str(string).replace("\n", "\n#") + "\n"))
+            sys.stdout.write(
+                textcolor("# " + str(string).replace("\n", "\n#") + "\n"))
         if debug:
             log.debug(str(string))
 
@@ -375,23 +380,23 @@ class ReplayScript(object):
                     'io.recvrepeat(timeout={})\n'.format(self.recv_timeout))
                 return
         else:
-            self._output('io.recvuntil("{}", timeout={}, template=\n"""{}""", {} mark="{}", retrieve="", pause={})\n'.format(
+            self._output('io.recvuntil("{}", timeout={}, template=\n"""{}""", {} mark="{}", retrieve="", pause=recv_pause)\n'.format(
                 peer[start:end].tail_character, self.recv_timeout, peer[start:end].printable,
                 'expect=\n{}, '.format(
-                    expected_content) if expected_content else '', peer.name, str(self.no_pause in ['send', 'none'])
-            ), valid=self.recvuntil or peer.recv_method == 'recvuntil')
-        self._output('io.recvn({}, timeout={}, template=\n"""{}""", {}mark="{}", retrieve="", pause={})\n'.format(
+                    expected_content) if expected_content else '', peer.name
+            ), valid = self.recvuntil or peer.recv_method == 'recvuntil')
+        self._output('io.recvn({}, timeout={}, template=\n"""{}""", {}mark="{}", retrieve="", pause=recv_pause)\n'.format(
             peer[start:end].length, self.recv_timeout, peer[start:end].printable,
             'expect=\n{}, '.format(
-                expected_content) if expected_content else '', peer.name, str(self.no_pause in ['send', 'none'])
-        ), valid=self.recvn or peer.recv_method == 'recvn')
+                expected_content) if expected_content else '', peer.name
+        ), valid = self.recvn or peer.recv_method == 'recvn')
 
     def _render_received_peer(self, peer, relation_list):
         self._output_comment('*' * 100)
         self._output_comment('Received {}:'.format(peer.name))
         self._output_comment('*' * 100)
         # peer_offsets: all offsets matched peer
-        peer_offsets = [rel for rel in relation_list if type(rel) == Offset
+        peer_offsets=[rel for rel in relation_list if type(rel) == Offset
                         and peer in [offset.raddr.peer for offset in rel.all()]]
         walking_raddr = []
         for of in peer_offsets:
@@ -399,14 +404,14 @@ class ReplayScript(object):
                 walking_raddr.append((raddr, of))
         walking_raddr.sort(key=lambda x: x[0].position)
         # numb: bytes that has received
-        numb = 0
-        expected_recv = []
+        numb=0
+        expected_recv=[]
         for raddr, vof in walking_raddr:
-            saddr = vof.saddr
+            saddr=vof.saddr
             if raddr.same_as is None:
                 # first raddr that contains information in a offset object
                 if vof.color is None:
-                    vof.color = self._get_alternate_color()
+                    vof.color=self._get_alternate_color()
                 self._output_comment('[VOF_R{}]\taddr:{}\tpos:{}\toffset_val:{}'.format(
                     vof.id, raddr.hex, raddr.position, vof.hex), vof.color)
                 if not raddr.related_to:
@@ -416,7 +421,7 @@ class ReplayScript(object):
                             peer.name, raddr.hex, raddr.position, numb))
                         continue
                     self._render_receive(
-                        peer, numb, raddr.position, expected_recv=expected_recv)
+                        peer, numb, raddr.position, expected_recv = expected_recv)
                     self._output(
                         'res = io.recvn({})\n'.format(raddr.length))
                     self._output('try:\n')
@@ -428,10 +433,10 @@ class ReplayScript(object):
                     self._output('    raise e\n')
                     self._output(
                         'addr_recv_{} = res_addr\n'.format(saddr.id))
-                    numb = raddr.position + raddr.length
+                    numb=raddr.position + raddr.length
                     saddr.related_to.append(raddr)
                     raddr.related_to.append(saddr)
-                    expected_recv = []
+                    expected_recv=[]
                 else:
                     self._output(
                         'addr_recv_{} = res_addr\n'.format(saddr.id))
@@ -445,24 +450,24 @@ class ReplayScript(object):
         self._output_comment('Sending {}:'.format(peer.name))
         self._output_comment('*' * 100)
         # send peer may contains several addresses
-        has_valid_addr = False
+        has_valid_addr=False
         # numb is how many bytes has added to payload
         # peer_offsets = [rel for rel in relation_list if type(rel) == Offset
         #                 and peer is rel.saddr.peer]
-        numb = 0
+        numb=0
         for vof in [rel for rel in relation_list if type(rel) == Offset]:
             if peer is vof.saddr.peer:
-                raddr = vof.raddr
-                saddr = vof.saddr
+                raddr=vof.raddr
+                saddr=vof.saddr
                 if numb > int(saddr.position):
                     log.warn('address conflict in {}\naddr: {} at {}, while handling at byte {}'.format(
                         peer.name, saddr.hex, saddr.position, numb))
                     continue
                 if not has_valid_addr:
-                    has_valid_addr = True
+                    has_valid_addr=True
                     self._output('payload = ""\n')
                 if vof.color is None:
-                    vof.color = self._get_alternate_color()
+                    vof.color=self._get_alternate_color()
                 self._output_comment('[VOF_S{}]\taddr:{}\tpos:{}\toffset_val:{}'.format(
                     vof.id, saddr.hex, saddr.position, vof.hex), vof.color)
                 self._output(
@@ -484,8 +489,8 @@ class ReplayScript(object):
             diffs = []
             for diff in [diff for diff in peer.difference_list if type(diff) == Difference]:
                 diffs.append((diff.position, diff.position + diff.length))
-            self._output('io.send(payload, different={}, mark="{}", pause={})\n'.format(
-                str(diffs), peer.name, str(self.no_pause in ['recv', 'none'])))
+            self._output('io.send(payload, different={}, mark="{}", pause=send_pause)\n'.format(
+                str(diffs), peer.name))
         else:
             self._output('io.send(payload)\n')
 
@@ -569,12 +574,14 @@ class ReplayScript(object):
         # TODO: use mako template to do render
         df = self.template_file
         log.info('Start rendering...')
-        sys.stdout.write('\n'.join(self.content_head).format(
+        sys.stdout.write(self.content_head.format(
+            str(self.no_pause in ['send', 'none']), str(self.no_pause in ['recv', 'none']),
             self.elf.file.name,
             '"{}",'.format(self.ld) if self.ld else '',
             '"{}",'.format(self.libc) if self.libc else '',
             self.host, self.port,
         ) + '\n')
+ 
         self._output_comment(
             'Using template: {}'.format(df.name), debug=True)
         if self.custom_handler:
@@ -587,7 +594,7 @@ class ReplayScript(object):
             elif peer.direction == DIRECTION_SEND:
                 self._render_send_peer(peer, df.relation_list)
         self._output('io.interactive()\n')
-        sys.stdout.write('\n'.join(self.content_tail) + "\n\n\n")
+        sys.stdout.write("\n" + self.content_tail + "\n\n\n")
         self._output_comment('*' * 50 +
                              'DEBUG_INFO' + '*' * 50)
         # relation_list is empty if there is no send_addr in data file

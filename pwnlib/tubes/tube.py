@@ -136,7 +136,7 @@ def expect(func):
                 warn += '\nRecieved:\n'
                 if not self.isEnabledFor(logging.DEBUG):
                     warn += fiddling.hexdump(res, style=received_hexdump_style, special=not_match)
-                self.warn(warn)
+                self.info(warn)
                 if pause:
                     raw_input('Press enter to continue...')
             elif expect_data:
@@ -157,7 +157,7 @@ def expect(func):
                     warn += '\nRecieved:\n'
                     if not self.isEnabledFor(logging.DEBUG):
                         warn += fiddling.hexdump(res, style=received_hexdump_style, special=not_match)
-                    self.warn(warn)
+                    self.info(warn)
                     if pause:
                         raw_input('Press enter to continue...')
 
@@ -208,7 +208,7 @@ def mark_different(func):
                 numb = end
         warn += text.white(data[numb:] + "\n")
         warn += fiddling.hexdump(data, style=different_hexdump_style, special=not_match)
-        self.warn(warn)
+        self.info(warn)
         if pause:
             raw_input('Press enter to continue...')
         return res

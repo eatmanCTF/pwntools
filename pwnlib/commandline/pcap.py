@@ -68,7 +68,6 @@ class Pcap:
                 summary[server].update({client: 1})
             else:
                 summary[server][client] += 1
-            # print(client, service)
         return summary
 
     def search(self, data):
@@ -159,7 +158,7 @@ class Pcap:
             })
         return res
 
-    def stream_to_vector(self, stream_id):
+    def stream_to_vector(self, stream_id, count_only=True):
         stream_json = self.stream_to_json(stream_id)
         res = []
         for pkt_info in stream_json:
@@ -176,7 +175,10 @@ class Pcap:
 
         res = [n for n in res if n != 0]
 
-        return {stream_id[1]: res}
+        if count_only:
+            return {stream_id[1]: len(res)}
+        else:
+            return {stream_id[1]: res}
 
     def payload_to_ascii(self, payload):
         if payload != None:
@@ -273,6 +275,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    '--detail',
+    action='store_true',
+    default=False,
+    help='display more',
+)
+
+parser.add_argument(
     '-s',
     '--search',
     nargs='?',
@@ -317,7 +326,7 @@ def main(args):
 
     if args.analyse:
         for stream_id in pcap.streams:
-            print(pcap.stream_to_vector(stream_id))
+            print(pcap.stream_to_vector(stream_id, args.detail == False))
 
     elif args.search or args.regex:
         if args.search:
@@ -331,7 +340,11 @@ def main(args):
             os.system("mkdir -p output")
 
         for p in pkts:
+
             stream_id = pcap.follow_tcp_stream(p)
+            if stream_id == None:
+                log.warning("在非完整流中找到数据包，数据包位置：{}".format(pcap.pkts.index(p)))
+                continue
             team, gamebox = Pcap.stream_id_to_names(stream_id, config["teams"], config["gameboxs"])
             pkts = pcap.streams[stream_id]
             out_path = "output/{}_{}_{}_{}.json".format(gamebox, team, pcap.pkts.index(pkts[0]) + 1, len(pkts))

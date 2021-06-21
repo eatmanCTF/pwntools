@@ -1,0 +1,29 @@
+*.o
+*.hi
+*.pyc
+*~
+*.swp
+.ropeproject
+*.pdf
+*/auto/*
+*/bin/*
+docs/build
+build
+MANIFEST
+dist
+venv
+.vscode
+*.egg-info
+*.core
+.coverage
+<<<<<<< HEAD
+.tox
+.history/*
+.gdb_history
+core
+=======
+.coverage.*
+.idea
+__pycache__
+!.github
+>>>>>>> remotes/upstream/dev

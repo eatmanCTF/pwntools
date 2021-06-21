@@ -343,6 +343,7 @@ def wait_for_debugger(pid, debugger_pid=None):
                     else:
                         debugger_pid = 0
                         break
+                break
             else:
                 while t.timeout and tracer(pid) is None:
                     time.sleep(0.01)

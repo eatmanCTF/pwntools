@@ -20,7 +20,7 @@ except ELFError:
 if not binary:
     binary = './path/to/binary'
 
-exe = os.path.basename(binary)
+elf = os.path.basename(binary)
 
 ssh = user or password
 if ssh and not port:
@@ -28,30 +28,21 @@ if ssh and not port:
 elif host and not port:
     port = 4141
 
-remote_path = remote_path or exe
+remote_path = remote_path or elf 
 password = password or 'secret1234'
 binary_repr = repr(binary)
 %>\
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 %if not quiet:
 # This exploit template was generated via:
 # $ ${' '.join(map(sh_string, argv))}
 %endif
 from pwn import *
-
-%if not quiet:
-# Set up pwntools for the correct architecture
-%endif
-%if ctx.binary:
-exe = context.binary = ELF(${binary_repr})
-<% binary_repr = 'exe.path' %>
-%else:
-context.update(arch='i386')
-exe = ${binary_repr}
-<% binary_repr = 'exe' %>
-%endif
-
+from pwn import p16, u16, p32, u32, p64, u64
+import re
+import os
+import time
 %if not quiet:
 # Many built-in settings can be controlled on the command-line and show up
 # in "args".  For example, to dump all data sent/received, and disable ASLR
@@ -60,12 +51,6 @@ exe = ${binary_repr}
 %if host or port or user:
 # ./exploit.py GDB HOST=example.com PORT=4141
 %endif
-%endif
-%if host:
-host = args.HOST or ${repr(host)}
-%endif
-%if port:
-port = int(args.PORT or ${port})
 %endif
 %if user:
 user = args.USER or ${repr(user)}
@@ -83,65 +68,45 @@ if not args.LOCAL:
     shell.set_working_directory(symlink=True)
 %endif
 
-%if host:
-def start_local(argv=[], *a, **kw):
-    '''Execute the target binary locally'''
-    if args.GDB:
-        return gdb.debug([${binary_repr}] + argv, gdbscript=gdbscript, *a, **kw)
-    else:
-        return process([${binary_repr}] + argv, *a, **kw)
-
-def start_remote(argv=[], *a, **kw):
-  %if ssh:
-    '''Execute the target binary on the remote host'''
-    if args.GDB:
-        return gdb.debug([remote_path] + argv, gdbscript=gdbscript, ssh=shell, *a, **kw)
-    else:
-        return shell.process([remote_path] + argv, *a, **kw)
-  %else:
-    '''Connect to the process on the remote host'''
-    io = connect(host, port)
-    if args.GDB:
-        gdb.attach(io, gdbscript=gdbscript)
-    return io
-  %endif
-%endif
-
-%if host:
-def start(argv=[], *a, **kw):
-    '''Start the exploit against the target.'''
-    if args.LOCAL:
-        return start_local(argv, *a, **kw)
-    else:
-        return start_remote(argv, *a, **kw)
-%else:
-def start(argv=[], *a, **kw):
-    '''Start the exploit against the target.'''
-    if args.GDB:
-        return gdb.debug([${binary_repr}] + argv, gdbscript=gdbscript, *a, **kw)
-    else:
-        return process([${binary_repr}] + argv, *a, **kw)
-%endif
-
-%if exe or remote_path:
+%if elf or remote_path:
 %if not quiet:
 # Specify your GDB script here for debugging
 # GDB will be launched if the exploit is run via e.g.
 # ./exploit.py GDB
 %endif
 gdbscript = '''
-%if ctx.binary:
-  %if 'main' in ctx.binary.symbols:
-tbreak main
-  %elif 'DYN' != ctx.binary.elftype:
-tbreak *0x{exe.entry:x}
-  %endif
-%endif
-continue
 '''.format(**locals())
 %endif
 
+%if not quiet:
+# Set up pwntools for the correct architecture
+%endif
 
+host = args.HOST
+port = int(args.PORT) if args.PORT else 6666
+src = args.SRC or "2.31"
+if args.REMOTE:
+    mode = "remote"
+    context.log_level = 'CRITICAL'
+else:
+    if args.SRC:
+        mode = "src"
+    else:
+        mode = "local"
+    context.terminal = ["tmux", "splitw", "-h", "-p", "60"]
+
+pwn = Pwn(${binary_repr}, mode=mode, src=src, libs=[], host=host, port=port, gdbscript=gdbscript)
+
+elf = context.binary = pwn.elf
+libc = pwn.libc
+rop = ROP(elf.path)
+
+%if ctx.binary:
+<% binary_repr = 'elf.path' %>
+%else:
+context.update(arch='i386')
+<% binary_repr = 'elf' %>
+%endif
 %if not quiet:
 #===========================================================
 #                    EXPLOIT GOES HERE
@@ -158,8 +123,10 @@ continue
 # ${line}
 %endfor
 %endif
-
-io = start()
+if __name__ == "__main__":
+    io = pwn.start(sys.argv[1:])
+    io.interactive()
+    io.close()
 
 %if not quiet:
 # shellcode = asm(shellcraft.sh())
@@ -171,5 +138,3 @@ io = start()
 # flag = io.recv(...)
 # log.success(flag)
 %endif
-
-io.interactive()

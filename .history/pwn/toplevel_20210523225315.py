@@ -6,6 +6,7 @@ import operator
 import os
 import platform
 import re
+import requests
 import socks
 import signal
 import string
@@ -20,6 +21,7 @@ import colored_traceback
 from pprint import pprint
 
 import pwnlib
+from pwn.eatman import Pwn, Jam, JamedArg, mod_attack, Tea
 from pwnlib import *
 from pwnlib.asm import *
 from pwnlib.context import Thread
@@ -71,9 +73,6 @@ from pwnlib.util.proc import pidof
 from pwnlib.util.sh_string import sh_string, sh_prepare, sh_command_with
 from pwnlib.util.splash import *
 from pwnlib.util.web import *
-
-# eatman add
-from pwnlib.eatman import *
 
 # Promote these modules, so that "from pwn import *" will let you access them
 

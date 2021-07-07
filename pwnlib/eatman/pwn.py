@@ -11,11 +11,11 @@ from pwnlib.log import Logger, getLogger
 from pwnlib.tubes.process import process
 from pwnlib.tubes.remote import connect
 import shutil
-import sys, string
 import re
 from ctypes import *
 
-LIBC_DATABASE_UTIL = "/home/ubtu/ctf_local/git_eatman/libc-database"
+HOME = os.getenv("HOME")
+LIBC_DATABASE_UTIL = f"{HOME}/ctf_local/git_eatman/libc-database"
 LIBC_DBROOT = os.path.join(LIBC_DATABASE_UTIL, "db")
 LIBC_DBSRCROOT = os.path.join(LIBC_DATABASE_UTIL, "db_source")
 ELF_TMPPATH = "/tmp/pwn"

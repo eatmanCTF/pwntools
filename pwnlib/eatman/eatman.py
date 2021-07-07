@@ -211,7 +211,7 @@ class Jam(str):
 						break
 					max_count -= 1
 				else:
-					print 'unknown libc database path: {}'.format(LIBC_DATABASE_PATH)
+					print('unknown libc database path: {}'.format(LIBC_DATABASE_PATH))
 				cls._libc = ELF(libc_path)
 		return cls._libc
 
